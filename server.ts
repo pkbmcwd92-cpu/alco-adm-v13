@@ -641,8 +641,10 @@ app.post('/api/ai/generate-atp', async (req, res) => {
     return res.status(400).json({ error: 'Tahun ajaran/akademik harus diisi sebelum menyusun ATP.' });
   }
 
-  if (!semester || typeof semester !== 'string' || semester.trim() === '') {
-    return res.status(400).json({ error: 'Semester harus diisi sebelum menyusun ATP.' });
+  if (isK13) {
+    if (!semester || typeof semester !== 'string' || semester.trim() === '') {
+      return res.status(400).json({ error: 'Semester harus diisi sebelum menyusun ATP.' });
+    }
   }
 
   // 3. Validate totalHoursPerWeek if provided (No silent default, no fake JP assumption)
@@ -681,7 +683,7 @@ Susunlah Matriks Alur Tujuan Pembelajaran (ATP) yang berurutan secara logis, ped
 DATA PEMBELAJARAN:
 - Mata Pelajaran: ${subject || '-'}
 - Kelas / Fase: ${grade || '-'} / ${phase || '-'}
-- Tahun Ajaran / Semester: ${academicYear || '-'} / ${semester || '-'}
+${isK13 ? `- Tahun Ajaran / Semester: ${academicYear || '-'} / ${semester || '-'}` : `- Tahun Ajaran: ${academicYear || '-'}`}
 - Alokasi Jam per Minggu: ${validatedWeeklyJP !== undefined ? `${validatedWeeklyJP} JP` : 'Belum ditentukan'}
 - Rujukan CP: ${cpGeneral || '-'}
 

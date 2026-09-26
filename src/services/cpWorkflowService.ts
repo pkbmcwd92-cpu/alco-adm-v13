@@ -293,7 +293,6 @@ function pedagogicalATPFingerprint(atp?: ATPData | null): string {
       tpStatement: normalizeText(item.tpStatement),
       materialScope: normalizeText(item.materialScope),
       jp: item.jp ?? item.allocatedJP ?? null,
-      semester: item.semester ?? null,
       assessmentPlan: normalizeText(item.assessmentPlan),
       resources: normalizeText(item.resources),
       p3Dimensions: normalizeStringArray(item.p3Dimensions),

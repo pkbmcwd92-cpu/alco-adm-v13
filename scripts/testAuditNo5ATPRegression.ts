@@ -363,6 +363,7 @@ const aiGeneratedATP: ATPData = {
   generatedBy: 'AI',
   workflowStatus: 'DRAFT', // Must start as DRAFT!
   generatedAt: new Date().toISOString(),
+  basedOnTpUpdatedAt: mockTPData.updatedAt,
   needsReview: false,
   updatedAt: new Date().toISOString(),
 };

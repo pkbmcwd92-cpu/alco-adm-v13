@@ -76,6 +76,9 @@ jobs:
       - name: Test Profile School Binding V5
         run: npx tsx scripts/testProfileSchoolBindingV5.ts
 
+      - name: Test Merdeka ATP Annualization Integrity
+        run: npx tsx scripts/testMerdekaATPAnnualizationIntegrity.ts
+
       - name: Test AI Transport Hardening
         run: npx tsx scripts/testAITransportHardening.ts
 

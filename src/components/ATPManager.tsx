@@ -104,9 +104,7 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
         subject: context.subject,
         grade: context.grade,
         phase: context.phase,
-        semester: context.semester,
         academicYear: context.academicYear,
-        totalHoursPerWeek: context.totalHoursPerWeek,
       });
 
       const formattedItems: ATPItem[] = generated.items.map((item, idx) => {
@@ -118,7 +116,6 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
           tpStatement: item.tpStatement || '',
           materialScope: item.materialScope || '',
           jp: item.jp !== undefined && item.jp !== null && Number(item.jp) > 0 ? Number(item.jp) : undefined,
-          semester: (item.semester === 1 || item.semester === 2) ? item.semester : (context.semester === 1 || context.semester === 2 ? context.semester : undefined),
           p3Dimensions: Array.isArray(item.p3Dimensions) ? item.p3Dimensions : [],
           assessmentPlan: item.assessmentPlan || '',
           glossary: item.glossary || '',
@@ -290,7 +287,6 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
       tpStatement: '',
       materialScope: '',
       jp: undefined,
-      semester: (context.semester === 1 || context.semester === 2) ? context.semester : undefined,
       p3Dimensions: [],
       assessmentPlan: '',
       glossary: '',
@@ -409,7 +405,7 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
               )}
             </div>
             <p className="text-sm text-slate-500 mt-1">
-              Petakan alur pengurutan materi, estimasi Jam Pelajaran (JP), asesmen, dan kata kunci glosarium untuk <strong>{context.subject}</strong> ({context.grade} - Semester {context.semester}).
+              Petakan alur pengurutan materi, estimasi Jam Pelajaran (JP), asesmen, dan kata kunci glosarium untuk <strong>{context.subject}</strong> ({context.grade}), Tahun Ajaran {context.academicYear || '-'}.
             </p>
           </div>
 
@@ -509,7 +505,7 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
                   <th className="p-3 min-w-[140px]">Lingkup Materi</th>
                   <th className="p-3 min-w-[120px]">Profil Pancasila</th>
                   <th className="p-3 min-w-[150px]">Rencana Asesmen</th>
-                  <th className="p-3 w-20 text-center">Sem / JP</th>
+                  <th className="p-3 w-20 text-center">Alokasi JP</th>
                   <th className="p-3 w-24 text-center">Aksi</th>
                 </tr>
               </thead>
@@ -581,9 +577,6 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
                         <div className="font-bold text-slate-900">
                           {item.jp !== undefined && item.jp !== null ? `${item.jp} JP` : '-'}
                         </div>
-                        <div className="text-[10px] text-slate-500 font-medium">
-                          {item.semester ? `Sem ${item.semester}` : '-'}
-                        </div>
                       </td>
                     <td className="p-3 text-center">
                       <div className="flex items-center justify-center gap-1">
@@ -626,7 +619,7 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
               <tfoot>
                 <tr className="bg-slate-100 font-bold text-slate-900 border-t-2 border-slate-300">
                   <td colSpan={6} className="p-3 text-right">
-                    Total Alokasi Waktu Semester:
+                    Total Alokasi Waktu:
                   </td>
                   <td className="p-3 text-center bg-blue-50 text-blue-900 font-extrabold">
                     {knownTotalJP} JP {hasUnknownJP ? '*' : ''}
@@ -755,7 +748,7 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
                 </div>
               )}
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
                     Urutan Ke
@@ -770,25 +763,6 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
                     }
                     className="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-600"
                   />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                    Semester
-                  </label>
-                  <select
-                    value={currentItem.semester || ''}
-                    onChange={(e) =>
-                      setCurrentItem({
-                        ...currentItem,
-                        semester: e.target.value ? (parseInt(e.target.value, 10) as 1 | 2) : undefined,
-                      })
-                    }
-                    className="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-600 font-medium"
-                  >
-                    <option value="">-- Belum ditentukan --</option>
-                    <option value={1}>Semester 1</option>
-                    <option value={2}>Semester 2</option>
-                  </select>
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase mb-1">

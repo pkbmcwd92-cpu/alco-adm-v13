@@ -32,8 +32,9 @@ export interface GenerateATPParams {
   subject: string;
   grade: string;
   phase: string;
-  semester: string;
   academicYear: string;
+  curriculum?: string;
+  semester?: string;
   totalHoursPerWeek?: number;
 }
 
