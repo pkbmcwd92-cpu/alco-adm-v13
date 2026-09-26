@@ -112,10 +112,61 @@ runTest('3. Search criteria states initialize from school.regency and school.pro
 // -----------------------------------------------------------------------------
 // TEST 4: Online search does not depend on static availableProvinces
 // -----------------------------------------------------------------------------
-runTest('4. Online search request does not restrict search input to static availableProvinces dropdown', () => {
+runTest('4. Online search input for Province is free-text and does not depend on static availableProvinces dropdown', () => {
   assert.ok(
-    tpmSource.includes('searchRegency') && tpmSource.includes('searchProvince'),
-    'TimePlanningManager must support freeform search criteria state for regency and province'
+    tpmSource.includes('<input\n                    type="text"\n                    value={searchProvince}'),
+    'TimePlanningManager must render searchProvince as free-text input'
+  );
+  assert.ok(
+    !tpmSource.includes('availableProvinces.map'),
+    'TimePlanningManager must NOT restrict Province search to availableProvinces.map'
+  );
+  assert.ok(
+    !tpmSource.includes('getAvailableProvinces'),
+    'TimePlanningManager must NOT require getAvailableProvinces'
+  );
+});
+
+// -----------------------------------------------------------------------------
+// TEST 4B: Region separation (Regency != Province)
+// -----------------------------------------------------------------------------
+runTest('4B. candidate.regency does not overwrite selectedProvince', () => {
+  assert.ok(
+    !tpmSource.includes('setSelectedProvince(candidate.regency'),
+    'TimePlanningManager must NOT assign candidate.regency to selectedProvince'
+  );
+  assert.ok(
+    tpmSource.includes("setSelectedProvince(candidate.province || searchProvince || school.province || '');"),
+    'TimePlanningManager must assign candidate.province or fallback province to selectedProvince'
+  );
+});
+
+// -----------------------------------------------------------------------------
+// TEST 4C: Confirm is the only persistence gate
+// -----------------------------------------------------------------------------
+runTest('4C. Manual override and online candidate selection update draft state only without calling onSaveCalendar', () => {
+  const overrideMatch = tpmSource.match(/const handleApplyOverride = [\s\S]*?\n  \};/);
+  assert.ok(overrideMatch, 'handleApplyOverride function must exist');
+  const overrideBody = overrideMatch[0];
+  assert.ok(
+    !overrideBody.includes('onSaveCalendar('),
+    'handleApplyOverride MUST NOT call onSaveCalendar (draft only)'
+  );
+
+  const candidateMatch = tpmSource.match(/const handleApplyOnlineCandidate = [\s\S]*?\n  \};/);
+  assert.ok(candidateMatch, 'handleApplyOnlineCandidate function must exist');
+  const candidateBody = candidateMatch[0];
+  assert.ok(
+    !candidateBody.includes('onSaveCalendar('),
+    'handleApplyOnlineCandidate MUST NOT call onSaveCalendar (draft only)'
+  );
+
+  const confirmMatch = tpmSource.match(/const handleConfirmCalendar = [\s\S]*?\n  \};/);
+  assert.ok(confirmMatch, 'handleConfirmCalendar function must exist');
+  const confirmBody = confirmMatch[0];
+  assert.ok(
+    confirmBody.includes('onSaveCalendar(res.calendar, res.days);'),
+    'handleConfirmCalendar MUST be the sole trigger calling onSaveCalendar'
   );
 });
 

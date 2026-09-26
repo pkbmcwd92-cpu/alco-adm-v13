@@ -24,8 +24,6 @@ import {
   applyManualCalendarOverride,
   confirmCalendarWorkflow,
   resetCalendarToOfficial,
-  getAvailableProvinces,
-  getAvailableAcademicYears,
 } from '../../services/calendarResolver';
 import {
   generateKalenderAkademik,
@@ -410,7 +408,7 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
     setSourceName(candidate.documentTitle);
     setSourceDocumentNumber(candidate.documentNumber || '');
     setSourceUrl(candidate.sourceUrl);
-    setSelectedProvince(candidate.regency || candidate.province || searchProvince);
+    setSelectedProvince(candidate.province || searchProvince || school.province || '');
     setSourceType('REGIONAL_EDUCATION_CALENDAR');
     setWorkflowStatus('AUTO_RESOLVED');
     setResolutionStatus('RESOLVED');
@@ -452,9 +450,8 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
 
     setIsOverridden(true);
     setWorkflowStatus('MANUAL_OVERRIDE');
-    onSaveCalendar(res.calendar, res.days);
 
-    setSaveNotification('Penyesuaian Manual (Manual Override) berhasil diterapkan & disimpan.');
+    setSaveNotification('Penyesuaian diterapkan sebagai draf. Klik "Konfirmasi Kalender" untuk menyimpan.');
     setTimeout(() => setSaveNotification(null), 3000);
   };
 
@@ -670,9 +667,6 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
       setIsExporting(null);
     }
   };
-
-  const availableProvinces = useMemo(() => getAvailableProvinces(), []);
-  const availableYears = useMemo(() => getAvailableAcademicYears(), []);
 
   return (
     <div className="space-y-6" id="time-planning-container">
@@ -1134,21 +1128,16 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
                 </div>
                 <div>
                   <label className="block text-[11px] font-medium text-slate-600 mb-0.5">Provinsi</label>
-                  <select
+                  <input
+                    type="text"
                     value={searchProvince}
+                    placeholder="e.g. Banten"
                     onChange={(e) => {
                       setSearchProvince(e.target.value);
                       setSelectedProvince(e.target.value);
                     }}
                     className="w-full text-xs px-2.5 py-1.5 border border-slate-300 rounded bg-white font-medium focus:ring-1 focus:ring-indigo-500 focus:outline-none"
-                  >
-                    <option value="">-- Pilih Provinsi --</option>
-                    {availableProvinces.map((prov) => (
-                      <option key={prov} value={prov}>
-                        {prov}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </div>
               </div>
             </div>
