@@ -266,11 +266,11 @@ runTest('15. ATPItem.semester remains as optional compatibility field in types',
   );
 });
 
-// 16. App.tsx still has ATP persistence deferred
-runTest('16. App.tsx keeps handleSaveATP persistence cutover deferred', () => {
+// 16. App.tsx connects handleSaveATP to Storage V5 annual persistence
+runTest('16. App.tsx connects handleSaveATP to Storage V5 annual persistence', () => {
   assert.ok(
-    appSource.includes('const handleSaveATP = (atp: ATPData) => {\n    // ATP persistence cutover is deferred\n  };'),
-    'App.tsx handleSaveATP must remain deferred'
+    appSource.includes('saveATPV5(activeYearPlan.id, canonicalATP)'),
+    'App.tsx handleSaveATP must persist to Storage V5 via saveATPV5'
   );
 });
 

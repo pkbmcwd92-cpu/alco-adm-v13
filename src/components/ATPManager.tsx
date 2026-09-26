@@ -181,6 +181,11 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
     const updated: ATPData = {
       ...atp,
       academicSettingId: academicSetting.id,
+      tpDataId: tp.id,
+      tpId: tp.id,
+      academicYear: context.academicYear,
+      subjectCode: context.subjectCode || context.subject,
+      phase: context.phase,
       rationale,
       items: items.map((item, idx) => ({ ...item, stepNumber: idx + 1 })),
       totalJP: knownTotalJP,

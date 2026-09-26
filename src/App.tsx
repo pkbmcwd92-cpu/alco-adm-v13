@@ -42,6 +42,7 @@ import {
   saveCPV5,
   saveCPAnalysisV5,
   saveTPV5,
+  saveATPV5,
 } from './services/storageV5';
 import { getRuntimeContextV5 } from './services/runtimeV5';
 import {
@@ -591,7 +592,46 @@ export function App() {
   };
 
   const handleSaveATP = (atp: ATPData) => {
-    // ATP persistence cutover is deferred
+    const persistedTP = runtimeContext.annualData?.tp;
+
+    if (!activeYearPlan || !persistedTP) {
+      const missingReason = !activeYearPlan
+        ? 'Tidak ada Tahun Ajaran (YearPlan) aktif untuk menyimpan ATP.'
+        : 'Tujuan Pembelajaran (TP) harus disimpan terlebih dahulu sebelum menyimpan ATP.';
+      setAppNotice({
+        type: 'error',
+        message: missingReason,
+      });
+      return;
+    }
+
+    try {
+      const canonicalItems = (atp.items || []).map((item) => {
+        const { semester: _legacySemester, ...annualItem } = item;
+        return annualItem;
+      });
+
+      const canonicalATP: ATPData = {
+        ...atp,
+        id: atp.id && atp.id.trim() ? atp.id : `atp-${activeYearPlan.id}`,
+        academicSettingId: activeYearPlan.id,
+        tpId: persistedTP.id,
+        tpDataId: persistedTP.id,
+        academicYear: activeYearPlan.academicYear,
+        subjectCode: activeYearPlan.subjectCode || activeYearPlan.subject,
+        phase: activeYearPlan.phase || atp.phase,
+        basedOnTpUpdatedAt: atp.basedOnTpUpdatedAt || persistedTP.updatedAt,
+        items: canonicalItems,
+      };
+
+      saveATPV5(activeYearPlan.id, canonicalATP);
+      refreshV5();
+    } catch (err: any) {
+      setAppNotice({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Gagal menyimpan Alur Tujuan Pembelajaran (ATP) ke penyimpanan tahunan.',
+      });
+    }
   };
 
   // Handlers for Interconnected Administration Modules (Transitional)
