@@ -1574,6 +1574,7 @@ export type WorkflowStepId =
   | 'cp-analysis'
   | 'tp'
   | 'atp'
+  | 'semester'
   | 'k13-kd'
   | 'k13-indikator'
   | 'k13-tujuan'

@@ -250,6 +250,7 @@ export function validateWorkflowDependencies(
     'cp-analysis': { id: 'cp-analysis', status: 'BLOCKED', isBlocked: true, isComplete: false, isStale: false },
     tp: { id: 'tp', status: 'BLOCKED', isBlocked: true, isComplete: false, isStale: false },
     atp: { id: 'atp', status: 'BLOCKED', isBlocked: true, isComplete: false, isStale: false },
+    semester: { id: 'semester', status: 'BLOCKED', isBlocked: true, isComplete: false, isStale: false },
     'k13-kd': { id: 'k13-kd', status: 'BLOCKED', isBlocked: true, isComplete: false, isStale: false },
     'k13-indikator': { id: 'k13-indikator', status: 'BLOCKED', isBlocked: true, isComplete: false, isStale: false },
     'k13-tujuan': { id: 'k13-tujuan', status: 'BLOCKED', isBlocked: true, isComplete: false, isStale: false },
@@ -608,7 +609,17 @@ export function validateWorkflowDependencies(
       hasOrphans: hasOrphanCriterion,
     };
 
-    // 6. Administrasi Hub Overall Gating
+    // 6. Semester Selection step state
+    stepStates.semester = {
+      id: 'semester',
+      status: isATPComplete ? 'READY' : 'BLOCKED',
+      isBlocked: !isATPComplete,
+      isComplete: isATPComplete,
+      isStale: isATPStale,
+      reason: !isATPComplete ? 'Memerlukan penyusunan Alur Tujuan Pembelajaran (ATP) terlebih dahulu' : undefined,
+    };
+
+    // 7. Administrasi Hub Overall Gating
     stepStates.admin = {
       id: 'admin',
       status: isATPComplete ? 'COMPLETE' : isTPDataValid ? 'IN_PROGRESS' : 'BLOCKED',
@@ -627,6 +638,8 @@ export function validateWorkflowDependencies(
     stepStates.tp.status = 'BLOCKED';
     stepStates.atp.isBlocked = true;
     stepStates.atp.status = 'BLOCKED';
+    stepStates.semester.isBlocked = true;
+    stepStates.semester.status = 'BLOCKED';
     stepStates['k13-kd'].isBlocked = true;
     stepStates['k13-kd'].status = 'BLOCKED';
     stepStates['k13-indikator'].isBlocked = true;

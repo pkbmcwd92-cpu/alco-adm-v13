@@ -5,6 +5,7 @@ import {
   FileSpreadsheet,
   Target,
   GitMerge,
+  Calendar,
   FileCheck2,
   CheckCircle2,
   Lock,
@@ -240,8 +241,20 @@ export const WorkflowStepper: React.FC<WorkflowStepperProps> = ({
           lockReason: stepStates.atp.reason,
         },
         {
-          id: 'admin',
+          id: 'semester',
           num: '07',
+          title: 'SEMESTER',
+          sub: 'Pilih Semester Aktif',
+          icon: <Calendar className="w-4 h-4" />,
+          status: stepStates.semester.status,
+          isComplete: stepStates.semester.isComplete,
+          isLocked: stepStates.semester.isBlocked,
+          isStale: stepStates.semester.isStale,
+          lockReason: stepStates.semester.reason,
+        },
+        {
+          id: 'admin',
+          num: '08',
           title: 'ADMINISTRASI',
           sub: 'Asesmen & Dokumen',
           icon: <FileCheck2 className="w-4 h-4" />,
@@ -364,7 +377,7 @@ export const WorkflowStepper: React.FC<WorkflowStepperProps> = ({
 
       {/* Workflow Navigation Bar */}
       <nav aria-label="Alur Kerja Administrasi" className="bg-white rounded-2xl p-2 sm:p-3 border border-slate-200/80 shadow-xs">
-        <div className={`grid grid-cols-2 md:grid-cols-3 ${isK13Active ? 'lg:grid-cols-6' : isMerdekaActive ? 'lg:grid-cols-7' : 'lg:grid-cols-2'} gap-2`}>
+        <div className={`grid grid-cols-2 md:grid-cols-4 ${isK13Active ? 'lg:grid-cols-6' : isMerdekaActive ? 'lg:grid-cols-8' : 'lg:grid-cols-2'} gap-2`}>
           {steps.map((step) => {
             const isActive = currentStep === step.id;
 

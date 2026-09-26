@@ -37,6 +37,7 @@ import {
   setActivePrincipalV5,
   createYearHierarchyV5,
   setActiveYearPlanV5,
+  setActiveSemesterPlanV5,
   deleteWorkspaceV5,
   renameWorkspaceV5,
   saveCPV5,
@@ -57,6 +58,7 @@ import { CPManager } from './components/CPManager';
 import { CPAnalysisManager } from './components/CPAnalysisManager';
 import { TPManager } from './components/TPManager';
 import { ATPManager } from './components/ATPManager';
+import { SemesterSelector } from './components/SemesterSelector';
 import { K13Manager } from './components/administration/K13Manager';
 import { AdministrationHub } from './components/administration/AdministrationHub';
 import { BackupModal } from './components/BackupModal';
@@ -112,6 +114,8 @@ export function App() {
     activeWorkspace,
     yearPlansForActiveProfile,
     workspacesForActiveProfile,
+    semesterPlansForActiveYear,
+    activeSemesterPlan,
   } = runtimeContext;
 
   const activeSchoolForView = activeSchool || EMPTY_SCHOOL_VIEW;
@@ -634,6 +638,18 @@ export function App() {
     }
   };
 
+  const handleSelectSemester = (semesterPlanId: string) => {
+    try {
+      setActiveSemesterPlanV5(semesterPlanId);
+      refreshV5();
+    } catch (err: any) {
+      setAppNotice({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Gagal memilih semester aktif.',
+      });
+    }
+  };
+
   // Handlers for Interconnected Administration Modules (Transitional)
   const handleSaveCalendar = (cal: any, days: any[]) => {};
   const handleSaveTimeAllocations = (allocs: any[]) => {};
@@ -811,8 +827,18 @@ export function App() {
               academicSetting={transitionalAcademicSetting}
               profile={activeProfile}
               onSaveATP={handleSaveATP}
-              onNextStep={() => setCurrentStep('admin')}
+              onNextStep={() => setCurrentStep('semester')}
               onBackToTP={() => setCurrentStep('tp')}
+            />
+          )}
+
+          {currentStep === 'semester' && (
+            <SemesterSelector
+              semesterPlans={semesterPlansForActiveYear}
+              activeSemesterPlan={activeSemesterPlan}
+              onSelectSemester={handleSelectSemester}
+              onNextStep={() => setCurrentStep('admin')}
+              onBackToATP={() => setCurrentStep('atp')}
             />
           )}
 
