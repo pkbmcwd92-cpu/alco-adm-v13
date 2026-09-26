@@ -211,24 +211,19 @@ runTest('7. basedOnCpUpdatedAt remains tied to current CP timestamp', () => {
   );
 });
 
-runTest('8. No V5 persistence is introduced in this task', () => {
-  const appPath = path.resolve(process.cwd(), 'src/App.tsx');
-  const appSource = fs.readFileSync(appPath, 'utf-8');
-
-  // Verify handleSaveCPAnalysis is still no-op in App.tsx
-  const match = appSource.match(/const handleSaveCPAnalysis = \(analysis: CPAnalysisData\) => \{([\s\S]*?)\};/);
-  assert.ok(match, 'handleSaveCPAnalysis must exist in App.tsx');
-  const body = match[1];
+runTest('8. CP Analysis component integrity: CPAnalysisManager does not perform direct storage writes', () => {
+  const compPath = path.resolve(process.cwd(), 'src/components/CPAnalysisManager.tsx');
+  const compSource = fs.readFileSync(compPath, 'utf-8');
 
   assert.strictEqual(
-    body.includes('saveCPAnalysisV5'),
+    compSource.includes('saveStorageV5'),
     false,
-    'App.tsx must not wire saveCPAnalysisV5 in this task'
+    'CPAnalysisManager must not call saveStorageV5 directly'
   );
   assert.strictEqual(
-    /import\s*\{[^}]*saveCPAnalysisV5[^}]*\}\s*from/.test(appSource),
+    compSource.includes('saveCPAnalysisV5'),
     false,
-    'App.tsx must not import saveCPAnalysisV5 in this task'
+    'CPAnalysisManager must delegate to onSaveCPAnalysis instead of saving directly'
   );
 });
 

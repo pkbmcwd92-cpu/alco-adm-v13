@@ -40,6 +40,7 @@ import {
   deleteWorkspaceV5,
   renameWorkspaceV5,
   saveCPV5,
+  saveCPAnalysisV5,
 } from './services/storageV5';
 import { getRuntimeContextV5 } from './services/runtimeV5';
 import {
@@ -517,7 +518,34 @@ export function App() {
   };
 
   const handleSaveCPAnalysis = (analysis: CPAnalysisData) => {
-    // CP Analysis persistence cutover is deferred
+    const persistedCP = runtimeContext.annualData?.cp;
+    if (!activeYearPlan || !persistedCP) {
+      setAppNotice({
+        type: 'error',
+        message: !activeYearPlan
+          ? 'Tidak ada Tahun Ajaran (YearPlan) aktif untuk menyimpan Analisis CP.'
+          : 'Capaian Pembelajaran (CP) harus disimpan terlebih dahulu sebelum menyimpan Analisis CP.',
+      });
+      return;
+    }
+
+    try {
+      const canonicalAnalysis: CPAnalysisData = {
+        ...analysis,
+        id: analysis.id && analysis.id.trim() ? analysis.id : `cpanalysis-${activeYearPlan.id}`,
+        academicSettingId: activeYearPlan.id,
+        cpId: persistedCP.id,
+        basedOnCpUpdatedAt: persistedCP.updatedAt,
+      };
+
+      saveCPAnalysisV5(activeYearPlan.id, canonicalAnalysis);
+      refreshV5();
+    } catch (err: any) {
+      setAppNotice({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Gagal menyimpan Analisis CP ke penyimpanan tahunan.',
+      });
+    }
   };
 
   const handleSaveTP = (tp: TPData) => {
