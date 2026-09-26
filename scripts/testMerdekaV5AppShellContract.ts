@@ -1,4 +1,6 @@
 import assert from 'node:assert';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   createInitialStorageV5,
   loadStorageV5,
@@ -18,6 +20,11 @@ import {
   STORAGE_KEY_V5,
 } from '../src/services/storageV5';
 import { getRuntimeContextV5 } from '../src/services/runtimeV5';
+import {
+  validateAcademicSettingReadiness,
+  validateAnnualMerdekaSettingReadiness,
+} from '../src/services/academicSettingReadiness';
+import { AcademicSetting } from '../src/types';
 
 console.log('=== RUNNING AUDIT: MERDEKA V5 APP SHELL CONTRACT (E.4.1B.1) ===\n');
 
@@ -315,6 +322,175 @@ runTest('10. Duplicate annual identity remains rejected by canonical V5 rules', 
       );
     },
     'Duplicate YearPlan creation must be rejected by V5 rules'
+  );
+});
+
+runTest('11. Valid Merdeka annual context with no semester is valid', () => {
+  const annualSetting: AcademicSetting = {
+    id: 'as-merdeka-annual-1',
+    profileId: testProfile.id,
+    curriculum: 'Kurikulum Merdeka',
+    curriculumType: 'KURIKULUM_MERDEKA',
+    academicYear: '2026/2027',
+    semester: '', // strictly empty for annual workflow
+    level: 'SD',
+    grade: 'Kelas 2',
+    phase: 'Fase A',
+    subject: 'Pendidikan Jasmani, Olahraga, dan Kesehatan (PJOK)',
+    updatedAt: new Date().toISOString(),
+  };
+
+  const annualReadiness = validateAnnualMerdekaSettingReadiness(annualSetting);
+  assert.strictEqual(annualReadiness.valid, true, 'Annual Merdeka setting with no semester must be valid');
+  assert.strictEqual(annualReadiness.curriculumType, 'KURIKULUM_MERDEKA');
+  assert.strictEqual(annualReadiness.errors.length, 0);
+
+  const generalReadiness = validateAcademicSettingReadiness(annualSetting);
+  assert.strictEqual(generalReadiness.valid, true, 'General readiness validator must accept Merdeka annual setting with no semester');
+  assert.strictEqual(generalReadiness.curriculumType, 'KURIKULUM_MERDEKA');
+  assert.strictEqual(generalReadiness.errors.length, 0);
+
+  // Also verify undefined semester
+  const annualSettingUndefinedSemester: AcademicSetting = {
+    ...annualSetting,
+    semester: undefined as any,
+  };
+  assert.strictEqual(validateAnnualMerdekaSettingReadiness(annualSettingUndefinedSemester).valid, true);
+  assert.strictEqual(validateAcademicSettingReadiness(annualSettingUndefinedSemester).valid, true);
+});
+
+runTest('12. Missing academicYear is invalid in Merdeka annual context', () => {
+  const baseSetting: AcademicSetting = {
+    id: 'as-test-year',
+    profileId: testProfile.id,
+    curriculum: 'Kurikulum Merdeka',
+    curriculumType: 'KURIKULUM_MERDEKA',
+    academicYear: '',
+    semester: '',
+    level: 'SD',
+    grade: 'Kelas 2',
+    phase: 'Fase A',
+    subject: 'PJOK',
+    updatedAt: new Date().toISOString(),
+  };
+
+  const r1 = validateAnnualMerdekaSettingReadiness(baseSetting);
+  assert.strictEqual(r1.valid, false, 'Missing academicYear must be invalid');
+  assert.ok(r1.errors.some((e) => e.includes('Tahun ajaran')), 'Must have academicYear error');
+
+  const r2 = validateAcademicSettingReadiness(baseSetting);
+  assert.strictEqual(r2.valid, false, 'General validator must reject missing academicYear');
+});
+
+runTest('13. Missing grade is invalid in Merdeka annual context', () => {
+  const baseSetting: AcademicSetting = {
+    id: 'as-test-grade',
+    profileId: testProfile.id,
+    curriculum: 'Kurikulum Merdeka',
+    curriculumType: 'KURIKULUM_MERDEKA',
+    academicYear: '2026/2027',
+    semester: '',
+    level: 'SD',
+    grade: '',
+    phase: '',
+    subject: 'PJOK',
+    updatedAt: new Date().toISOString(),
+  };
+
+  const r1 = validateAnnualMerdekaSettingReadiness(baseSetting);
+  assert.strictEqual(r1.valid, false, 'Missing grade must be invalid');
+  assert.ok(r1.errors.some((e) => e.includes('tingkat/kelas')), 'Must have grade error');
+
+  const r2 = validateAcademicSettingReadiness(baseSetting);
+  assert.strictEqual(r2.valid, false, 'General validator must reject missing grade');
+});
+
+runTest('14. Missing subject is invalid in Merdeka annual context', () => {
+  const baseSetting: AcademicSetting = {
+    id: 'as-test-subject',
+    profileId: testProfile.id,
+    curriculum: 'Kurikulum Merdeka',
+    curriculumType: 'KURIKULUM_MERDEKA',
+    academicYear: '2026/2027',
+    semester: '',
+    level: 'SD',
+    grade: 'Kelas 2',
+    phase: 'Fase A',
+    subject: '   ',
+    updatedAt: new Date().toISOString(),
+  };
+
+  const r1 = validateAnnualMerdekaSettingReadiness(baseSetting);
+  assert.strictEqual(r1.valid, false, 'Missing subject must be invalid');
+  assert.ok(r1.errors.some((e) => e.includes('Mata pelajaran')), 'Must have subject error');
+
+  const r2 = validateAcademicSettingReadiness(baseSetting);
+  assert.strictEqual(r2.valid, false, 'General validator must reject missing subject');
+});
+
+runTest('15. No fallback to Semester 1 in Merdeka annual context', () => {
+  const annualSetting: AcademicSetting = {
+    id: 'as-merdeka-annual-no-sem',
+    profileId: testProfile.id,
+    curriculum: 'Kurikulum Merdeka',
+    curriculumType: 'KURIKULUM_MERDEKA',
+    academicYear: '2026/2027',
+    semester: '',
+    level: 'SD',
+    grade: 'Kelas 2',
+    phase: 'Fase A',
+    subject: 'PJOK',
+    updatedAt: new Date().toISOString(),
+  };
+
+  // Validating must not mutate or inject Semester 1
+  const r = validateAnnualMerdekaSettingReadiness(annualSetting);
+  assert.strictEqual(r.valid, true);
+  assert.strictEqual(annualSetting.semester, '', 'setting.semester must strictly remain empty');
+  assert.notStrictEqual(annualSetting.semester, '1 (Ganjil)');
+  assert.notStrictEqual(annualSetting.semester, 'Semester 1');
+
+  // YearPlan and workspace in V5 state must also never have semester
+  const state = loadStorageV5();
+  const yp = state.yearPlans[0] as any;
+  const ws = state.workspaces[0] as any;
+  assert.strictEqual(yp.semester, undefined);
+  assert.strictEqual(ws.semester, undefined);
+  assert.strictEqual(state.activeSemesterPlanId, undefined);
+});
+
+runTest('16. Annual UI source does not require semester to continue', () => {
+  const academicSettingsPath = path.resolve(process.cwd(), 'src/components/AcademicSettings.tsx');
+  const uiSource = fs.readFileSync(academicSettingsPath, 'utf-8');
+
+  // Verify semester selector is omitted for Merdeka
+  assert.ok(
+    uiSource.includes('!isMerdeka(formData)'),
+    'Semester select must be hidden when Merdeka is active'
+  );
+
+  // Verify semester is excluded from dirty-state calculation in Merdeka annual path
+  assert.ok(
+    uiSource.includes('isSemesterChanged') && uiSource.includes('isMerdekaPath'),
+    'Semester must not be included in dirty-state calculation for Merdeka'
+  );
+
+  // Verify save/continue uses annual readiness check that does not require semester
+  assert.ok(
+    uiSource.includes('validateAnnualMerdekaSettingReadiness'),
+    'AcademicSettings must use validateAnnualMerdekaSettingReadiness'
+  );
+
+  // Verify no fallback or hardcoded Semester 1 assignment
+  assert.strictEqual(
+    uiSource.includes("semester: '1 (Ganjil)'"),
+    false,
+    'AcademicSettings must not fake or default semester to 1 (Ganjil)'
+  );
+  assert.strictEqual(
+    uiSource.includes("semester = '1 (Ganjil)'"),
+    false,
+    'AcademicSettings must not assign default semester'
   );
 });
 

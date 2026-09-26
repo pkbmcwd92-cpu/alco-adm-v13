@@ -35,7 +35,10 @@ import {
   isMerdeka,
   getCurriculumTypeFromSetting,
 } from '../services/curriculumRouter';
-import { validateAcademicSettingReadiness } from '../services/academicSettingReadiness';
+import {
+  validateAcademicSettingReadiness,
+  validateAnnualMerdekaSettingReadiness,
+} from '../services/academicSettingReadiness';
 import { isValidDocumentDate } from '../services/documentDateService';
 import { TeacherTeachingLoadModal } from './TeacherTeachingLoadModal';
 
@@ -68,6 +71,7 @@ const AcademicSettingsForm: React.FC<AcademicSettingsFormProps> = ({
   const initialPhase = getPhaseFromGrade(setting.level, setting.grade);
   const [formData, setFormData] = useState<AcademicSetting>({
     ...setting,
+    semester: isMerdeka(setting) ? '' : (setting.semester || ''),
     phase: initialPhase,
     totalHoursPerWeek: setting.totalHoursPerWeek ?? null,
   });
@@ -94,6 +98,7 @@ const AcademicSettingsForm: React.FC<AcademicSettingsFormProps> = ({
     const derivedPhase = getPhaseFromGrade(setting.level, setting.grade);
     setFormData({
       ...setting,
+      semester: isMerdeka(setting) ? '' : (setting.semester || ''),
       phase: derivedPhase,
       totalHoursPerWeek: setting.totalHoursPerWeek ?? null,
     });
@@ -110,10 +115,15 @@ const AcademicSettingsForm: React.FC<AcademicSettingsFormProps> = ({
   // Dirty State Calculation: Check if form data or workspace name or documentDate differs from saved setting
   const isDirty = useMemo(() => {
     const derivedPhase = getPhaseFromGrade(formData.level, formData.grade);
+    const isMerdekaPath = isMerdeka(formData) || isMerdeka(setting);
+    const isSemesterChanged = isMerdekaPath
+      ? false
+      : (formData.semester || '') !== (setting.semester || '');
+
     const isSettingChanged =
       (formData.curriculum || '') !== (setting.curriculum || '') ||
       (formData.academicYear || '') !== (setting.academicYear || '') ||
-      (formData.semester || '') !== (setting.semester || '') ||
+      isSemesterChanged ||
       (formData.level || '') !== (setting.level || '') ||
       (formData.grade || '') !== (setting.grade || '') ||
       (formData.subject || '') !== (setting.subject || '') ||
@@ -188,6 +198,7 @@ const AcademicSettingsForm: React.FC<AcademicSettingsFormProps> = ({
     const derivedPhase = getPhaseFromGrade(setting.level, setting.grade);
     setFormData({
       ...setting,
+      semester: isMerdeka(setting) ? '' : (setting.semester || ''),
       phase: derivedPhase,
       totalHoursPerWeek: setting.totalHoursPerWeek ?? null,
     });
@@ -204,7 +215,9 @@ const AcademicSettingsForm: React.FC<AcademicSettingsFormProps> = ({
       return null;
     }
 
-    const readiness = validateAcademicSettingReadiness(formData);
+    const readiness = isMerdeka(formData)
+      ? validateAnnualMerdekaSettingReadiness(formData)
+      : validateAcademicSettingReadiness(formData);
     if (!readiness.valid) {
       setErrorMessage(readiness.errors.join('. ') || 'Lengkapi semua field wajib sebelum menyimpan.');
       return null;
@@ -218,6 +231,7 @@ const AcademicSettingsForm: React.FC<AcademicSettingsFormProps> = ({
 
     const updated: AcademicSetting = {
       ...formData,
+      semester: isMerdeka(formData) ? '' : (formData.semester || ''),
       phase: derivedPhase,
       curriculumType: resolvedCurriculumType,
       updatedAt: new Date().toISOString(),
@@ -248,7 +262,9 @@ const AcademicSettingsForm: React.FC<AcademicSettingsFormProps> = ({
     if (isDirty) {
       setShowUnsavedPrompt(true);
     } else {
-      const readiness = validateAcademicSettingReadiness(formData);
+      const readiness = isMerdeka(formData)
+        ? validateAnnualMerdekaSettingReadiness(formData)
+        : validateAcademicSettingReadiness(formData);
       if (!readiness.valid) {
         setErrorMessage(readiness.errors.join('. ') || 'Lengkapi dan simpan Data Pembelajaran sebelum melanjutkan.');
         return;
@@ -282,7 +298,7 @@ const AcademicSettingsForm: React.FC<AcademicSettingsFormProps> = ({
                 <span className="w-2 h-2 rounded-full bg-amber-500"></span>
                 <span>Perubahan belum disimpan</span>
               </div>
-            ) : validateAcademicSettingReadiness(setting).valid ? (
+            ) : (isMerdeka(setting) ? validateAnnualMerdekaSettingReadiness(setting).valid : validateAcademicSettingReadiness(setting).valid) ? (
               <div
                 id="indicator-clean-ready-state"
                 className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200"
@@ -388,7 +404,7 @@ const AcademicSettingsForm: React.FC<AcademicSettingsFormProps> = ({
           )}
 
           {/* Row 1: Kurikulum & Tahun Ajaran */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className={`grid grid-cols-1 ${isMerdeka(formData) ? 'md:grid-cols-2' : 'md:grid-cols-3'} gap-4`}>
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase mb-1.5 flex items-center gap-1.5">
                 <BookOpen className="w-3.5 h-3.5 text-blue-600" />
@@ -400,10 +416,12 @@ const AcademicSettingsForm: React.FC<AcademicSettingsFormProps> = ({
                 onChange={(e) => {
                   const newCur = e.target.value;
                   const jp = lookupOfficialWeeklyJP(newCur, formData.level, formData.grade, formData.subject);
+                  const isNewMerdeka = newCur.includes('Merdeka');
                   setFormData({
                     ...formData,
                     curriculum: newCur,
                     curriculumType: getCurriculumTypeFromSetting({ curriculum: newCur }),
+                    semester: isNewMerdeka ? '' : formData.semester,
                     totalHoursPerWeek: formData.isHoursOverridden ? formData.totalHoursPerWeek : jp.weeklyJP,
                     regulationReference: jp.regulationReference,
                   });
@@ -439,30 +457,32 @@ const AcademicSettingsForm: React.FC<AcademicSettingsFormProps> = ({
               </select>
             </div>
 
-            <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase mb-1.5 flex items-center gap-1.5">
-                <Calendar className="w-3.5 h-3.5 text-blue-600" />
-                <span>Semester</span>
-              </label>
-              <select
-                id="select-semester"
-                value={formData.semester || ''}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    semester: (e.target.value || undefined) as any,
-                  })
-                }
-                className="w-full text-sm px-3.5 py-2.5 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-600 bg-white cursor-pointer"
-              >
-                <option value="">— Pilih Semester —</option>
-                {SEMESTERS.map((sem) => (
-                  <option key={sem} value={sem}>
-                    {sem}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {!isMerdeka(formData) && (
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1.5 flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Semester</span>
+                </label>
+                <select
+                  id="select-semester"
+                  value={formData.semester || ''}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      semester: (e.target.value || undefined) as any,
+                    })
+                  }
+                  className="w-full text-sm px-3.5 py-2.5 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-600 bg-white cursor-pointer"
+                >
+                  <option value="">— Pilih Semester —</option>
+                  {SEMESTERS.map((sem) => (
+                    <option key={sem} value={sem}>
+                      {sem}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           {/* Row 2: Jenjang, Kelas & Derived Phase */}
