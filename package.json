@@ -34,7 +34,8 @@
     "test:b12o": "tsx scripts/testB12oScoringGuideEssayIntegrityRegression.ts",
     "test:b12p": "tsx scripts/testB12pCanonicalIdentityScopeIntegrityRegression.ts",
     "test:b12q": "npx tsx scripts/testB12qExactOrderContractRegression.ts",
-    "test:b12r": "tsx scripts/testB12rHistoricalAssessmentSnapshotFidelityRegression.ts"
+    "test:b12r": "tsx scripts/testB12rHistoricalAssessmentSnapshotFidelityRegression.ts",
+    "test:v5-shell": "tsx scripts/testMerdekaV5AppShellContract.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

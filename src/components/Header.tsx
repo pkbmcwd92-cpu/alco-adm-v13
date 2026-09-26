@@ -1,6 +1,7 @@
 import React from 'react';
 import { BookOpen, Database, UserCheck, Wifi, WifiOff, FolderPlus, Layers, Plus, Building2 } from 'lucide-react';
 import { TeacherProfile, SchoolData, AdministrationWorkspace } from '../types';
+import { AdministrationWorkspaceV5 } from '../types/storageV5';
 import { PWAInstallButton } from './PWAInstallButton';
 import { useOnlineStatus } from '../hooks/usePWAInstall';
 
@@ -8,7 +9,7 @@ interface HeaderProps {
   activeProfile?: TeacherProfile;
   school: SchoolData;
   profiles: TeacherProfile[];
-  workspaces: AdministrationWorkspace[];
+  workspaces: (AdministrationWorkspace | AdministrationWorkspaceV5)[];
   activeWorkspaceId: string;
   onSelectProfile: (id: string) => void;
   onSelectWorkspace: (id: string) => void;

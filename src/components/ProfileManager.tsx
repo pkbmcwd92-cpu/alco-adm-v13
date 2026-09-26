@@ -20,7 +20,8 @@ import {
   AlertTriangle,
   FolderPlus,
 } from 'lucide-react';
-import { TeacherProfile, SchoolData, PrincipalHistory, AdministrationWorkspace } from '../types';
+import { TeacherProfile, SchoolData, PrincipalHistory, AdministrationWorkspace, YearPlan } from '../types';
+import { AdministrationWorkspaceV5 } from '../types/storageV5';
 import { EDUCATION_LEVELS } from '../data/curriculumDefaults';
 import { SchoolIdentityProvider, SchoolSearchService, SchoolCandidate } from '../services/schoolProvider';
 
@@ -30,16 +31,19 @@ interface ProfileManagerProps {
   schools: SchoolData[];
   activeSchool?: SchoolData;
   principalHistories?: PrincipalHistory[];
-  activeWorkspace?: AdministrationWorkspace | null;
-  workspaces?: AdministrationWorkspace[];
+  activeWorkspace?: AdministrationWorkspace | AdministrationWorkspaceV5 | null;
+  workspaces?: AdministrationWorkspaceV5[];
+  yearPlans?: YearPlan[];
   onCreateWorkspaceClick?: () => void;
   onSelectProfile: (id: string) => void;
-  onSaveProfile: (profile: TeacherProfile) => void;
+  onSaveProfile: (profile: TeacherProfile, isCreate?: boolean) => boolean | void;
   onDeleteProfile: (id: string) => void;
   onCreateSchool: (school: Omit<SchoolData, 'id' | 'createdAt' | 'updatedAt'> | SchoolData) => void;
   onUpdateSchool: (id: string, updates: Partial<SchoolData>) => void;
   onSavePrincipalHistory?: (history: PrincipalHistory) => void;
   onSetActivePrincipal?: (schoolId: string, historyId: string) => void;
+  onSelectWorkspace?: (workspaceId: string) => void;
+  onDeleteWorkspace?: (workspaceId: string) => void;
   onNextStep: () => void;
 }
 
@@ -51,6 +55,7 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
   principalHistories = [],
   activeWorkspace,
   workspaces = [],
+  yearPlans = [],
   onCreateWorkspaceClick,
   onSelectProfile,
   onSaveProfile,
@@ -59,6 +64,8 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
   onUpdateSchool,
   onSavePrincipalHistory,
   onSetActivePrincipal,
+  onSelectWorkspace,
+  onDeleteWorkspace,
   onNextStep,
 }) => {
   const activeProfile = profiles.find((p) => p.id === activeProfileId) || profiles[0];
@@ -81,6 +88,7 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
 
   // Profile Modal State
   const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [profileModalMode, setProfileModalMode] = useState<'create' | 'edit'>('edit');
   const [profileToDelete, setProfileToDelete] = useState<TeacherProfile | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [deleteNotice, setDeleteNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -88,7 +96,7 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
   const [profileForm, setProfileForm] = useState<TeacherProfile>(() => {
     if (activeProfile) return { ...activeProfile };
     return {
-      id: `prof-${Date.now()}`,
+      id: '',
       name: '',
       nip: '',
       nuptk: '',
@@ -118,7 +126,7 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
         setProfileForm({ ...activeProfile });
       } else {
         setProfileForm({
-          id: `prof-${Date.now()}`,
+          id: '',
           name: '',
           nip: '',
           nuptk: '',
@@ -280,8 +288,9 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
   };
 
   const handleOpenAddProfile = () => {
+    setProfileModalMode('create');
     const newProfile: TeacherProfile = {
-      id: `prof-${Date.now()}`,
+      id: '',
       name: '',
       nip: '',
       nuptk: '',
@@ -289,14 +298,15 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
       defaultSubject: 'Bahasa Indonesia',
       defaultLevel: 'SD',
       schoolId: activeSchool?.id || '',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: '',
+      updatedAt: '',
     };
     setProfileForm(newProfile);
     setIsEditingProfile(true);
   };
 
   const handleOpenEditProfile = (profile: TeacherProfile) => {
+    setProfileModalMode('edit');
     setProfileForm({ ...profile });
     setIsEditingProfile(true);
   };
@@ -307,11 +317,17 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
       alert('Nama guru wajib diisi.');
       return;
     }
-    onSaveProfile({
-      ...profileForm,
-      updatedAt: new Date().toISOString(),
-    });
-    setIsEditingProfile(false);
+    const isCreate = profileModalMode === 'create' || !profiles.some((p) => p.id === profileForm.id);
+    const result = onSaveProfile(
+      {
+        ...profileForm,
+        updatedAt: new Date().toISOString(),
+      },
+      isCreate
+    );
+    if (result !== false) {
+      setIsEditingProfile(false);
+    }
   };
 
   const handleSearchSchool = async (e?: React.FormEvent) => {
@@ -713,10 +729,19 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
                     value={activeProfile.schoolId || activeSchool.id}
                     onChange={(e) => {
                       if (e.target.value && e.target.value !== activeProfile.schoolId) {
-                        onSaveProfile({
-                          ...activeProfile,
-                          schoolId: e.target.value,
-                        });
+                        const newSchoolId = e.target.value;
+                        const res = onSaveProfile(
+                          {
+                            ...activeProfile,
+                            schoolId: newSchoolId,
+                          },
+                          false
+                        );
+                        if (res === false) {
+                          setWorkspaceNotice(
+                            'Sekolah utama tidak dapat diubah karena profil ini sudah memiliki administrasi tahunan.'
+                          );
+                        }
                       }
                     }}
                     className="w-full text-xs px-3 py-2 rounded-xl border border-slate-300 bg-slate-50 hover:bg-white focus:bg-white text-slate-900 font-semibold focus:outline-hidden focus:ring-2 focus:ring-blue-600 transition cursor-pointer"
@@ -729,7 +754,7 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
                     ))}
                   </select>
                   <p className="text-[11px] text-slate-500">
-                    1 Profil Guru = 1 Sekolah Utama. Mengubah pilihan ini otomatis menyinkronkan seluruh lembar administrasi guru.
+                    1 Profil Guru = 1 Sekolah Utama sebagai acuan penyusunan administrasi pembelajaran, kop surat, dan lembar pengesahan.
                   </p>
                 </div>
               )}
@@ -911,13 +936,141 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
         </div>
       </div>
 
+      {/* Section: Daftar Administrasi Tahunan */}
+      <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-xs space-y-4" id="section-annual-workspaces">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-100 pb-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="w-6 h-6 rounded-md bg-blue-100 text-blue-800 text-xs font-bold flex items-center justify-center">
+                02
+              </span>
+              <h4 className="text-base font-bold text-slate-900">
+                Daftar Administrasi Tahunan ({workspaces.length})
+              </h4>
+            </div>
+            <p className="text-xs text-slate-500">
+              1 Administrasi Tahunan mencakup 1 Tahun Ajaran, Jenjang, Mata Pelajaran, dan Kelas (memuat Semester 1 & 2 secara internal).
+            </p>
+          </div>
+
+          <button
+            id="btn-create-annual-workspace"
+            type="button"
+            onClick={onCreateWorkspaceClick}
+            disabled={!activeProfile}
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold shadow-xs transition cursor-pointer self-start sm:self-auto ${
+              activeProfile
+                ? 'bg-blue-900 hover:bg-blue-950 text-white'
+                : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+            }`}
+          >
+            <Plus className="w-4 h-4" />
+            <span>Tambah Administrasi Tahunan</span>
+          </button>
+        </div>
+
+        {workspaces.length === 0 ? (
+          <div
+            id="empty-workspaces-banner"
+            className="bg-slate-50/70 rounded-2xl p-8 border-2 border-dashed border-slate-200 text-center space-y-3"
+          >
+            <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-700 mx-auto flex items-center justify-center">
+              <FolderPlus className="w-6 h-6" />
+            </div>
+            <div className="max-w-md mx-auto space-y-1">
+              <h5 className="font-bold text-slate-800 text-sm">Belum Ada Administrasi Tahunan</h5>
+              <p className="text-xs text-slate-500">
+                Klik tombol di atas untuk membuat administrasi tahunan baru bagi profil guru ini.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="annual-workspaces-grid">
+            {workspaces.map((ws) => {
+              const yearPlan = yearPlans.find((yp) => yp.id === ws.yearPlanId);
+              const isSelected = ws.id === (activeWorkspace ? activeWorkspace.id : '');
+              const displayTitle = yearPlan
+                ? `${yearPlan.subject} — ${yearPlan.grade}${yearPlan.classSection ? ` (${yearPlan.classSection})` : ''} — ${yearPlan.academicYear}`
+                : ws.name;
+
+              return (
+                <div
+                  key={ws.id}
+                  id={`workspace-card-${ws.id}`}
+                  onClick={() => onSelectWorkspace && onSelectWorkspace(ws.id)}
+                  className={`p-4 rounded-2xl border transition-all cursor-pointer space-y-3 relative group ${
+                    isSelected
+                      ? 'bg-blue-50/60 border-blue-600/70 ring-2 ring-blue-600/20 shadow-xs'
+                      : 'bg-white hover:bg-slate-50 border-slate-200/80 shadow-xs'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="space-y-1 flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800">
+                          {yearPlan?.curriculumType === 'K13' ? 'Kurikulum 2013' : 'Kurikulum Merdeka'}
+                        </span>
+                        {isSelected && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                            <Check className="w-3 h-3 text-emerald-600" /> Aktif
+                          </span>
+                        )}
+                      </div>
+                      <h5 className="font-bold text-slate-900 text-sm truncate" title={displayTitle}>
+                        {displayTitle}
+                      </h5>
+                    </div>
+
+                    {onDeleteWorkspace && (
+                      <button
+                        type="button"
+                        id={`btn-delete-workspace-${ws.id}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (confirm(`Hapus administrasi "${displayTitle}"?`)) {
+                            onDeleteWorkspace(ws.id);
+                          }
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition opacity-0 group-hover:opacity-100 cursor-pointer"
+                        title="Hapus Administrasi"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="text-xs text-slate-500 space-y-1 pt-2 border-t border-slate-100">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Tahun Ajaran:</span>
+                      <span className="font-semibold text-slate-700">{yearPlan?.academicYear || '-'}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Kelas / Fase:</span>
+                      <span className="font-semibold text-slate-700">
+                        {yearPlan?.grade || '-'} {yearPlan?.phase ? `(${yearPlan.phase})` : ''}
+                      </span>
+                    </div>
+                    {ws.documentDate && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">Tgl Dokumen:</span>
+                        <span className="text-slate-600">{ws.documentDate}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       {/* MODAL: Edit/Add Profile */}
       {isEditingProfile && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
           <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-base font-bold text-slate-900">
-                {profileForm.name ? 'Edit Profil Guru' : 'Tambah Profil Guru Baru'}
+                {profileModalMode === 'edit' && profileForm.name ? 'Edit Profil Guru' : 'Tambah Profil Guru Baru'}
               </h3>
               <button
                 onClick={() => setIsEditingProfile(false)}

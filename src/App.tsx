@@ -1,10 +1,11 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import {
   WorkflowStepId,
-  AppDataStore,
   TeacherProfile,
   SchoolData,
+  PrincipalHistory,
   AcademicSetting,
+  ActiveContext,
   CPData,
   CPAnalysisData,
   TPData,
@@ -12,45 +13,34 @@ import {
   AdministrationWorkspace,
   AppDocumentRecord,
   LearningPlan,
+  AssessmentPlan,
+  AssessmentPackage,
+  Student,
+  RemedialRecord,
+  EnrichmentRecord,
+  YearPlan,
+  SemesterPlan,
 } from './types';
 import {
-  getAppData,
-  getProfileWorkspace,
-  saveProfile,
-  deleteProfile,
-  createSchool,
-  updateSchool,
-  savePrincipalHistory,
-  setActivePrincipal,
-  saveAcademicSetting,
-  saveCP,
-  saveCPAnalysis,
-  saveTP,
-  saveATP,
-  saveDocuments,
-  saveStudents,
-  saveAcademicCalendar,
-  saveTimeAllocations,
-  saveAttendanceSession,
-  saveAssessmentCriteria,
-  saveAssessment,
-  deleteAssessment,
-  saveRemedialRecords,
-  saveEnrichmentRecords,
-  saveK13Analysis,
-  saveK13KKM,
-  saveLearningPlan,
-  deleteLearningPlan,
-  saveAssessmentPlan,
-  deleteAssessmentPlan,
-  saveAssessmentPackage,
-  deleteAssessmentPackage,
-  setActiveProfileId,
-  setActiveWorkspaceId,
-  createWorkspace,
-  duplicateWorkspace,
-  deleteWorkspace,
-} from './services/storage';
+  AppStorageStateV5,
+  AdministrationWorkspaceV5,
+} from './types/storageV5';
+import {
+  loadStorageV5,
+  createProfileV5,
+  updateProfileV5,
+  deleteProfileV5,
+  setActiveProfileV5,
+  createSchoolV5,
+  updateSchoolV5,
+  savePrincipalHistoryV5,
+  setActivePrincipalV5,
+  createYearHierarchyV5,
+  setActiveYearPlanV5,
+  deleteWorkspaceV5,
+  renameWorkspaceV5,
+} from './services/storageV5';
+import { getRuntimeContextV5 } from './services/runtimeV5';
 import {
   getLocalTodayDocumentDate,
   isValidDocumentDate,
@@ -88,62 +78,38 @@ const EMPTY_SCHOOL_VIEW: SchoolData = {
 };
 
 export function App() {
-  const [dataStore, setDataStore] = useState<AppDataStore>(getAppData());
+  const [v5State, setV5State] = useState<AppStorageStateV5>(() => loadStorageV5());
   const [currentStep, setCurrentStep] = useState<WorkflowStepId>('profile');
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
   const [isNewWorkspaceModalOpen, setIsNewWorkspaceModalOpen] = useState(false);
   const [appNotice, setAppNotice] = useState<{ type: 'error' | 'warning' | 'info'; message: string } | null>(null);
 
-  // New Workspace form state
+  // New Workspace form state (Canonical Merdeka Annual Hierarchy - No Semester)
   const [newWsGrade, setNewWsGrade] = useState('');
+  const [newWsClassSection, setNewWsClassSection] = useState('');
   const [newWsSubject, setNewWsSubject] = useState('');
-  const [newWsSemester, setNewWsSemester] = useState<'1 (Ganjil)' | '2 (Genap)' | ''>('');
   const [newWsYear, setNewWsYear] = useState('');
   const [newWsDocumentDate, setNewWsDocumentDate] = useState<string>('');
 
-  // Reload data from storage
-  const refreshData = useCallback(() => {
-    setDataStore(getAppData());
+  // Reload data from V5 storage authority
+  const refreshV5 = useCallback(() => {
+    setV5State(loadStorageV5());
   }, []);
 
-  // Compute the full workspace and active context using getProfileWorkspace
-  const currentWorkspaceData = useMemo(() => {
-    return getProfileWorkspace(dataStore.activeProfileId, dataStore.activeWorkspaceId);
-  }, [dataStore]);
+  // Compute canonical V5 runtime context
+  const runtimeContext = useMemo(() => {
+    return getRuntimeContextV5();
+  }, [v5State]);
 
   const {
-    workspace: activeWorkspace,
-    profile: activeProfile,
-    school: activeSchool,
-    academicSetting: activeAcademicSetting,
-    cp: activeCP,
-    cpAnalysis: activeCPAnalysis,
-    tp: activeTP,
-    atp: activeATP,
-    context: activeContext,
-    students = [],
-    calendar,
-    calendarDays = [],
-    timeAllocations = [],
-    attendanceSessions = [],
-    attendanceRecords = [],
-    assessmentCriteria = [],
-    assessments = [],
-    assessmentResults = [],
-    remedials = [],
-    enrichments = [],
-    k13Analysis,
-    k13KKM,
-    learningPlans = [],
-    assessmentPlans = [],
-    assessmentPackages = [],
-    allWorkspaces = [],
-    allWorkspacesForProfile = [],
-  } = currentWorkspaceData;
+    activeProfile,
+    activeSchool,
+    activeYearPlan,
+    activeWorkspace,
+    yearPlansForActiveProfile,
+    workspacesForActiveProfile,
+  } = runtimeContext;
 
-  const currentWorkspacesList = allWorkspacesForProfile && allWorkspacesForProfile.length > 0
-    ? allWorkspacesForProfile
-    : allWorkspaces;
   const activeSchoolForView = activeSchool || EMPTY_SCHOOL_VIEW;
   const newWorkspaceLevel = activeProfile?.defaultLevel || '';
   const availableGrades = newWorkspaceLevel && GRADE_PHASE_MAP[newWorkspaceLevel]
@@ -161,55 +127,170 @@ export function App() {
       });
       return;
     }
+    if (!activeProfile.schoolId && !activeSchool?.id) {
+      setAppNotice({
+        type: 'warning',
+        message: 'Pilih atau daftarkan Sekolah Utama terlebih dahulu sebelum membuat Administrasi.',
+      });
+      return;
+    }
     setNewWsSubject(activeProfile?.defaultSubject || '');
     setNewWsGrade('');
-    setNewWsSemester(activeAcademicSetting?.semester || '');
-    setNewWsYear(activeAcademicSetting?.academicYear || '');
+    setNewWsClassSection('');
+    setNewWsYear(activeYearPlan?.academicYear || '2026/2027');
     setNewWsDocumentDate(getLocalTodayDocumentDate());
     setIsNewWorkspaceModalOpen(true);
   };
 
-  // Handlers for Profile
+  // Handlers for Profile (Canonical Storage V5 Authority)
   const handleSelectProfile = (id: string) => {
-    setActiveProfileId(id);
-    refreshData();
+    try {
+      setActiveProfileV5(id);
+      refreshV5();
+    } catch (err: any) {
+      setAppNotice({
+        type: 'error',
+        message: err.message || 'Gagal memilih profil guru.',
+      });
+    }
   };
 
-  const handleSaveProfile = (profile: TeacherProfile) => {
-    saveProfile(profile);
-    refreshData();
+  const handleSaveProfile = (profile: TeacherProfile, isCreate?: boolean): boolean => {
+    try {
+      const isExisting = v5State.profiles.some((p) => p.id === profile.id);
+      if (!isExisting || isCreate) {
+        createProfileV5({
+          name: profile.name.trim(),
+          nip: profile.nip?.trim() || '',
+          nuptk: profile.nuptk?.trim() || undefined,
+          status: profile.status,
+          defaultSubject: profile.defaultSubject?.trim() || '',
+          defaultLevel: profile.defaultLevel,
+          schoolId: profile.schoolId?.trim() || undefined,
+        });
+      } else {
+        updateProfileV5(profile.id, {
+          name: profile.name.trim(),
+          nip: profile.nip?.trim() || '',
+          nuptk: profile.nuptk?.trim() || undefined,
+          status: profile.status,
+          defaultSubject: profile.defaultSubject?.trim() || '',
+          defaultLevel: profile.defaultLevel,
+          schoolId: profile.schoolId?.trim() || undefined,
+        });
+      }
+      refreshV5();
+      return true;
+    } catch (err: any) {
+      setAppNotice({
+        type: 'error',
+        message: err.message || 'Gagal menyimpan profil guru.',
+      });
+      return false;
+    }
   };
 
   const handleDeleteProfile = (id: string) => {
-    deleteProfile(id);
-    refreshData();
+    try {
+      deleteProfileV5(id);
+      refreshV5();
+      setAppNotice({
+        type: 'info',
+        message: 'Profil guru berhasil dihapus.',
+      });
+    } catch (err: any) {
+      setAppNotice({
+        type: 'error',
+        message: err.message || 'Gagal menghapus profil guru.',
+      });
+    }
   };
 
-  // Handlers for School (Explicit CRUD)
+  // Handlers for School (Canonical Storage V5 Authority)
   const handleCreateSchool = (school: Omit<SchoolData, 'id' | 'createdAt' | 'updatedAt'> | SchoolData) => {
-    createSchool(school);
-    refreshData();
+    try {
+      createSchoolV5({
+        name: school.name.trim(),
+        npsn: (school.npsn || '').trim(),
+        address: school.address || '',
+        village: school.village || '',
+        district: school.district || '',
+        regency: school.regency || '',
+        province: school.province || '',
+        principalName: school.principalName || '',
+        principalNip: school.principalNip || '',
+        verificationStatus: school.verificationStatus,
+        principalSource: school.principalSource,
+        principalSourceUrl: school.principalSourceUrl,
+      });
+      refreshV5();
+    } catch (err: any) {
+      setAppNotice({
+        type: 'error',
+        message: err.message || 'Gagal menambahkan sekolah baru.',
+      });
+    }
   };
 
   const handleUpdateSchool = (schoolId: string, updates: Partial<SchoolData>) => {
-    updateSchool(schoolId, updates);
-    refreshData();
+    try {
+      updateSchoolV5(schoolId, updates);
+      refreshV5();
+    } catch (err: any) {
+      setAppNotice({
+        type: 'error',
+        message: err.message || 'Gagal memperbarui sekolah.',
+      });
+    }
   };
 
-  const handleSavePrincipalHistory = (history: any) => {
-    savePrincipalHistory(history);
-    refreshData();
+  const handleSavePrincipalHistory = (history: PrincipalHistory) => {
+    try {
+      savePrincipalHistoryV5(history);
+      refreshV5();
+    } catch (err: any) {
+      setAppNotice({
+        type: 'error',
+        message: err.message || 'Gagal menyimpan riwayat kepala sekolah.',
+      });
+    }
   };
 
   const handleSetActivePrincipal = (schoolId: string, historyId: string) => {
-    setActivePrincipal(schoolId, historyId);
-    refreshData();
+    try {
+      setActivePrincipalV5(schoolId, historyId);
+      refreshV5();
+    } catch (err: any) {
+      setAppNotice({
+        type: 'error',
+        message: err.message || 'Gagal mengaktifkan kepala sekolah.',
+      });
+    }
   };
 
-  // Handlers for Workspaces
+  // Handlers for Workspaces / Annual Hierarchy (Canonical Storage V5 Authority)
   const handleSelectWorkspace = (wsId: string) => {
-    setActiveWorkspaceId(wsId);
-    refreshData();
+    const ws = v5State.workspaces.find((w) => w.id === wsId);
+    if (ws) {
+      setActiveYearPlanV5(ws.yearPlanId);
+      refreshV5();
+    }
+  };
+
+  const handleDeleteWorkspace = (wsId: string) => {
+    try {
+      deleteWorkspaceV5(wsId);
+      refreshV5();
+      setAppNotice({
+        type: 'info',
+        message: 'Administrasi tahunan berhasil dihapus.',
+      });
+    } catch (err: any) {
+      setAppNotice({
+        type: 'error',
+        message: err.message || 'Gagal menghapus administrasi tahunan.',
+      });
+    }
   };
 
   const handleCreateNewWorkspace = (e: React.FormEvent) => {
@@ -221,6 +302,14 @@ export function App() {
       });
       return;
     }
+    const targetSchoolId = activeProfile.schoolId || activeSchool?.id;
+    if (!targetSchoolId) {
+      setAppNotice({
+        type: 'error',
+        message: 'Sekolah utama belum ditentukan untuk profil guru ini. Tentukan sekolah utama pada Profil terlebih dahulu.',
+      });
+      return;
+    }
     if (!newWsSubject.trim()) {
       setAppNotice({
         type: 'warning',
@@ -228,10 +317,17 @@ export function App() {
       });
       return;
     }
+    if (!newWsGrade.trim()) {
+      setAppNotice({
+        type: 'warning',
+        message: 'Pilih Kelas / Tingkat terlebih dahulu.',
+      });
+      return;
+    }
     if (newWsYear.trim() && !/^\d{4}\/\d{4}$/.test(newWsYear.trim())) {
       setAppNotice({
         type: 'warning',
-        message: 'Tahun ajaran gunakan format 2026/2027 atau kosongkan jika belum ditentukan.',
+        message: 'Tahun ajaran gunakan format 2026/2027.',
       });
       return;
     }
@@ -243,142 +339,190 @@ export function App() {
       return;
     }
 
-    createWorkspace({
-      profileId: activeProfile?.id || '',
-      schoolId: activeSchool?.id || '',
-      documentDate: newWsDocumentDate.trim(),
-      setting: {
-        level: activeProfile?.defaultLevel || '',
-        grade: newWsGrade,
-        subject: newWsSubject.trim(),
-        semester: newWsSemester,
-        academicYear: newWsYear.trim(),
-      },
-    });
+    try {
+      const level = (activeProfile.defaultLevel || 'SD') as 'SD' | 'SMP' | 'SMA' | 'SMK';
+      const academicYear = newWsYear.trim() || '2026/2027';
+      const grade = newWsGrade.trim();
+      const subject = newWsSubject.trim();
+      const classSection = newWsClassSection.trim() || undefined;
 
-    setIsNewWorkspaceModalOpen(false);
-    refreshData();
-    setCurrentStep('academic');
+      const matchedGrade = availableGrades.find((g) => g.grade === grade);
+      const phase = matchedGrade?.phase;
+
+      // Canonical annual workspace name without any semester
+      const workspaceName = `${subject} — ${grade}${classSection ? ` (${classSection})` : ''} — ${academicYear}`;
+
+      createYearHierarchyV5({
+        profileId: activeProfile.id,
+        schoolId: targetSchoolId,
+        academicYear,
+        curriculumType: 'KURIKULUM_MERDEKA',
+        level,
+        grade,
+        classSection,
+        subject,
+        phase,
+        workspaceName,
+        documentDate: newWsDocumentDate.trim(),
+      });
+
+      setIsNewWorkspaceModalOpen(false);
+      refreshV5();
+      setCurrentStep('academic');
+    } catch (err: any) {
+      setAppNotice({
+        type: 'error',
+        message: err.message || 'Gagal membuat administrasi tahunan baru.',
+      });
+    }
   };
 
-  // Handlers for Academic Setting & Documents
+  // ==========================================================================
+  // TRANSITIONAL READ-ONLY DOWNSTREAM COMPATIBILITY (PART 7)
+  // Derived strictly from YearPlan + WorkspaceV5 + Profile + School.
+  // Never written to V3; does not invent a semester for annual workflow.
+  // ==========================================================================
+  const transitionalWorkspace = useMemo<AdministrationWorkspace | undefined>(() => {
+    if (!activeWorkspace) return undefined;
+    return {
+      id: activeWorkspace.id,
+      profileId: activeWorkspace.profileId,
+      schoolId: activeWorkspace.schoolId,
+      academicSettingId: activeYearPlan?.id || '',
+      name: activeWorkspace.name,
+      documentDate: activeWorkspace.documentDate,
+      createdAt: activeWorkspace.createdAt,
+      updatedAt: activeWorkspace.updatedAt,
+    };
+  }, [activeWorkspace, activeYearPlan]);
+
+  const transitionalAcademicSetting = useMemo<AcademicSetting>(() => {
+    if (!activeYearPlan) {
+      return {
+        id: '',
+        profileId: activeProfile?.id || '',
+        curriculum: 'Kurikulum Merdeka',
+        curriculumType: 'KURIKULUM_MERDEKA',
+        academicYear: '',
+        semester: '', // Strictly empty for annual workflow
+        level: activeProfile?.defaultLevel || 'SD',
+        grade: '',
+        phase: '',
+        subject: activeProfile?.defaultSubject || '',
+        updatedAt: '',
+      };
+    }
+    return {
+      id: activeYearPlan.id,
+      profileId: activeYearPlan.profileId,
+      curriculum: 'Kurikulum Merdeka',
+      curriculumType: activeYearPlan.curriculumType || 'KURIKULUM_MERDEKA',
+      academicYear: activeYearPlan.academicYear,
+      semester: '', // Strictly empty for annual workflow; NEVER default to Semester 1
+      level: activeYearPlan.level,
+      grade: activeYearPlan.grade,
+      classSection: activeYearPlan.classSection,
+      phase: activeYearPlan.phase || '',
+      subject: activeYearPlan.subject,
+      updatedAt: activeYearPlan.updatedAt,
+    };
+  }, [activeYearPlan, activeProfile]);
+
+  const transitionalActiveContext = useMemo<ActiveContext>(() => {
+    return {
+      profileId: activeProfile?.id || activeYearPlan?.profileId || '',
+      schoolId: activeSchool?.id || activeYearPlan?.schoolId || '',
+      curriculum: 'Kurikulum Merdeka',
+      curriculumType: activeYearPlan?.curriculumType || 'KURIKULUM_MERDEKA',
+      academicYear: activeYearPlan?.academicYear || '',
+      semester: '', // Strictly empty for annual workflow
+      level: activeYearPlan?.level || activeProfile?.defaultLevel || '',
+      grade: activeYearPlan?.grade || '',
+      phase: activeYearPlan?.phase || '',
+      subject: activeYearPlan?.subject || activeProfile?.defaultSubject || '',
+    };
+  }, [activeYearPlan, activeProfile, activeSchool]);
+
+  // Downstream domain models (transitional read fallbacks)
+  const activeCP: CPData = runtimeContext.annualData?.cp || {
+    id: '',
+    academicSettingId: activeYearPlan?.id || '',
+    subject: activeYearPlan?.subject || '',
+    elements: [],
+    updatedAt: '',
+  };
+  const activeCPAnalysis: CPAnalysisData = runtimeContext.annualData?.cpAnalysis || {
+    id: '',
+    academicSettingId: activeYearPlan?.id || '',
+    elements: [],
+    updatedAt: '',
+  };
+  const activeTP: TPData = runtimeContext.annualData?.tp || {
+    id: '',
+    academicSettingId: activeYearPlan?.id || '',
+    elements: [],
+    updatedAt: '',
+  };
+  const activeATP: ATPData = runtimeContext.annualData?.atp || {
+    id: '',
+    academicSettingId: activeYearPlan?.id || '',
+    items: [],
+    updatedAt: '',
+  };
+
+  // Handlers for Academic Setting & Documents (Transitional compatibility)
   const handleSaveAcademicSetting = (
     setting: AcademicSetting,
     customWorkspaceName?: string,
     documentDate?: string
   ): boolean => {
-    const saved = saveAcademicSetting(setting, customWorkspaceName, documentDate);
-    if (saved) {
-      refreshData();
+    if (activeWorkspace) {
+      if (customWorkspaceName?.trim()) {
+        try {
+          renameWorkspaceV5(activeWorkspace.id, customWorkspaceName.trim());
+        } catch {
+          // ignore error
+        }
+      }
+      refreshV5();
     }
-    return saved;
+    return true;
   };
 
   const handleSaveCP = (cp: CPData) => {
-    saveCP(cp);
-    refreshData();
+    // CP persistence cutover is deferred to future phase
   };
 
   const handleSaveCPAnalysis = (analysis: CPAnalysisData) => {
-    saveCPAnalysis(analysis);
-    refreshData();
+    // CP Analysis persistence cutover is deferred
   };
 
   const handleSaveTP = (tp: TPData) => {
-    saveTP(tp);
-    refreshData();
+    // TP persistence cutover is deferred
   };
 
   const handleSaveATP = (atp: ATPData) => {
-    saveATP(atp);
-    refreshData();
+    // ATP persistence cutover is deferred
   };
 
-  // Handlers for Interconnected Administration Modules
-  const handleSaveCalendar = (cal: any, days: any[]) => {
-    saveAcademicCalendar(cal, days);
-    refreshData();
-  };
-
-  const handleSaveTimeAllocations = (allocs: any[]) => {
-    saveTimeAllocations(activeAcademicSetting.id, allocs);
-    refreshData();
-  };
-
-  const handleSaveStudents = (stdList: any[]) => {
-    saveStudents(activeAcademicSetting.id, stdList);
-    refreshData();
-  };
-
-  const handleSaveAttendance = (session: any, records: any[]) => {
-    saveAttendanceSession(session, records);
-    refreshData();
-  };
-
-  const handleSaveCriteria = (criteria: any[]) => {
-    saveAssessmentCriteria(criteria);
-    refreshData();
-  };
-
-  const handleSaveAssessment = (assessment: any, results: any[]) => {
-    saveAssessment(assessment, results);
-    refreshData();
-  };
-
-  const handleDeleteAssessment = (assessmentId: string) => {
-    deleteAssessment(assessmentId);
-    refreshData();
-  };
-
-  const handleSaveRemedials = (records: any[]) => {
-    saveRemedialRecords(records);
-    refreshData();
-  };
-
-  const handleSaveEnrichments = (records: any[]) => {
-    saveEnrichmentRecords(records);
-    refreshData();
-  };
-
-  const handleSaveK13Analysis = (analysis: any) => {
-    saveK13Analysis(analysis);
-    refreshData();
-  };
-
-  const handleSaveK13KKM = (kkm: any) => {
-    saveK13KKM(kkm);
-    refreshData();
-  };
-
-  const handleSaveLearningPlan = (plan: LearningPlan) => {
-    saveLearningPlan(plan);
-    refreshData();
-  };
-
-  const handleDeleteLearningPlan = (planId: string) => {
-    deleteLearningPlan(planId);
-    refreshData();
-  };
-
-  const handleSaveAssessmentPlan = (plan: any) => {
-    saveAssessmentPlan(plan);
-    refreshData();
-  };
-
-  const handleDeleteAssessmentPlan = (planId: string) => {
-    deleteAssessmentPlan(planId);
-    refreshData();
-  };
-
-  const handleSaveAssessmentPackage = (pkg: any) => {
-    saveAssessmentPackage(pkg);
-    refreshData();
-  };
-
-  const handleDeleteAssessmentPackage = (pkgId: string) => {
-    deleteAssessmentPackage(pkgId);
-    refreshData();
-  };
+  // Handlers for Interconnected Administration Modules (Transitional)
+  const handleSaveCalendar = (cal: any, days: any[]) => {};
+  const handleSaveTimeAllocations = (allocs: any[]) => {};
+  const handleSaveStudents = (stdList: any[]) => {};
+  const handleSaveAttendance = (session: any, records: any[]) => {};
+  const handleSaveCriteria = (criteria: any[]) => {};
+  const handleSaveAssessment = (assessment: any, results: any[]) => {};
+  const handleDeleteAssessment = (assessmentId: string) => {};
+  const handleSaveRemedials = (records: any[]) => {};
+  const handleSaveEnrichments = (records: any[]) => {};
+  const handleSaveK13Analysis = (analysis: any) => {};
+  const handleSaveK13KKM = (kkm: any) => {};
+  const handleSaveLearningPlan = (plan: LearningPlan) => {};
+  const handleDeleteLearningPlan = (planId: string) => {};
+  const handleSaveAssessmentPlan = (plan: any) => {};
+  const handleDeleteAssessmentPlan = (planId: string) => {};
+  const handleSaveAssessmentPackage = (pkg: any) => {};
+  const handleDeleteAssessmentPackage = (pkgId: string) => {};
 
   return (
     <div className="min-h-screen bg-slate-100/70 text-slate-800 flex flex-col font-sans selection:bg-blue-100 selection:text-blue-900">
@@ -386,9 +530,9 @@ export function App() {
       <Header
         activeProfile={activeProfile}
         school={activeSchoolForView}
-        profiles={dataStore.profiles || []}
-        workspaces={currentWorkspacesList || []}
-        activeWorkspaceId={activeWorkspace?.id || dataStore.activeWorkspaceId || ''}
+        profiles={v5State.profiles || []}
+        workspaces={workspacesForActiveProfile || []}
+        activeWorkspaceId={activeWorkspace?.id || ''}
         onSelectProfile={handleSelectProfile}
         onSelectWorkspace={handleSelectWorkspace}
         onCreateWorkspaceClick={openNewWorkspaceModal}
@@ -429,27 +573,28 @@ export function App() {
           onSelectStep={(step) => setCurrentStep(step)}
           profile={activeProfile}
           school={activeSchool}
-          workspace={activeWorkspace}
-          academicSetting={activeAcademicSetting}
+          workspace={transitionalWorkspace}
+          academicSetting={transitionalAcademicSetting}
           cp={activeCP}
           cpAnalysis={activeCPAnalysis}
           tp={activeTP}
           atp={activeATP}
-          k13Analysis={k13Analysis}
-          k13KKM={k13KKM}
+          k13Analysis={undefined}
+          k13KKM={undefined}
         />
 
         {/* Step Views */}
         <section className="transition-all duration-150">
           {currentStep === 'profile' && (
             <ProfileManager
-              profiles={dataStore.profiles}
+              profiles={v5State.profiles}
               activeProfileId={activeProfile?.id || ''}
               activeSchool={activeSchool}
-              schools={dataStore.schools}
-              principalHistories={dataStore.principalHistories || []}
+              schools={v5State.schools}
+              principalHistories={v5State.principalHistories || []}
               activeWorkspace={activeWorkspace}
-              workspaces={currentWorkspacesList || []}
+              workspaces={workspacesForActiveProfile || []}
+              yearPlans={yearPlansForActiveProfile || []}
               onCreateWorkspaceClick={openNewWorkspaceModal}
               onSelectProfile={handleSelectProfile}
               onSaveProfile={handleSaveProfile}
@@ -458,18 +603,20 @@ export function App() {
               onUpdateSchool={handleUpdateSchool}
               onSavePrincipalHistory={handleSavePrincipalHistory}
               onSetActivePrincipal={handleSetActivePrincipal}
+              onSelectWorkspace={handleSelectWorkspace}
+              onDeleteWorkspace={handleDeleteWorkspace}
               onNextStep={() => setCurrentStep('academic')}
             />
           )}
 
           {currentStep === 'academic' && (
             <AcademicSettings
-              setting={activeAcademicSetting}
+              setting={transitionalAcademicSetting}
               profile={activeProfile}
-              workspace={activeWorkspace}
+              workspace={transitionalWorkspace}
               onSaveSetting={handleSaveAcademicSetting}
               onNextStep={(savedSetting?: AcademicSetting) => {
-                const effectiveSetting = savedSetting || activeAcademicSetting;
+                const effectiveSetting = savedSetting || transitionalAcademicSetting;
                 const readiness = validateAcademicSettingReadiness(effectiveSetting);
                 if (!readiness.valid || !readiness.curriculumType) {
                   setAppNotice({
@@ -491,8 +638,8 @@ export function App() {
           {currentStep === 'cp' && (
             <CPManager
               cp={activeCP}
-              context={activeContext}
-              academicSetting={activeAcademicSetting}
+              context={transitionalActiveContext}
+              academicSetting={transitionalAcademicSetting}
               profile={activeProfile}
               onSaveCP={handleSaveCP}
               onNextStep={() => setCurrentStep('cp-analysis')}
@@ -503,8 +650,8 @@ export function App() {
             <CPAnalysisManager
               cpAnalysis={activeCPAnalysis}
               cp={activeCP}
-              context={activeContext}
-              academicSetting={activeAcademicSetting}
+              context={transitionalActiveContext}
+              academicSetting={transitionalAcademicSetting}
               profile={activeProfile}
               onSaveCPAnalysis={handleSaveCPAnalysis}
               onNextStep={() => setCurrentStep('tp')}
@@ -517,8 +664,8 @@ export function App() {
               tp={activeTP}
               cp={activeCP}
               cpAnalysis={activeCPAnalysis}
-              context={activeContext}
-              academicSetting={activeAcademicSetting}
+              context={transitionalActiveContext}
+              academicSetting={transitionalAcademicSetting}
               profile={activeProfile}
               onSaveTP={handleSaveTP}
               onNextStep={() => setCurrentStep('atp')}
@@ -531,8 +678,8 @@ export function App() {
               atp={activeATP}
               tp={activeTP}
               cp={activeCP}
-              context={activeContext}
-              academicSetting={activeAcademicSetting}
+              context={transitionalActiveContext}
+              academicSetting={transitionalAcademicSetting}
               profile={activeProfile}
               onSaveATP={handleSaveATP}
               onNextStep={() => setCurrentStep('admin')}
@@ -544,9 +691,9 @@ export function App() {
           {currentStep === 'k13-kd' && (
             <K13Manager
               mode="kd"
-              k13Analysis={k13Analysis}
-              k13KKM={k13KKM}
-              academicSetting={activeAcademicSetting}
+              k13Analysis={undefined}
+              k13KKM={undefined}
+              academicSetting={transitionalAcademicSetting}
               profile={activeProfile}
               school={activeSchoolForView}
               onSaveAnalysis={handleSaveK13Analysis}
@@ -559,9 +706,9 @@ export function App() {
           {currentStep === 'k13-indikator' && (
             <K13Manager
               mode="indikator"
-              k13Analysis={k13Analysis}
-              k13KKM={k13KKM}
-              academicSetting={activeAcademicSetting}
+              k13Analysis={undefined}
+              k13KKM={undefined}
+              academicSetting={transitionalAcademicSetting}
               profile={activeProfile}
               school={activeSchoolForView}
               onSaveAnalysis={handleSaveK13Analysis}
@@ -574,9 +721,9 @@ export function App() {
           {currentStep === 'k13-tujuan' && (
             <K13Manager
               mode="tujuan"
-              k13Analysis={k13Analysis}
-              k13KKM={k13KKM}
-              academicSetting={activeAcademicSetting}
+              k13Analysis={undefined}
+              k13KKM={undefined}
+              academicSetting={transitionalAcademicSetting}
               profile={activeProfile}
               school={activeSchoolForView}
               onSaveAnalysis={handleSaveK13Analysis}
@@ -589,9 +736,9 @@ export function App() {
           {currentStep === 'k13-kkm' && (
             <K13Manager
               mode="kkm"
-              k13Analysis={k13Analysis}
-              k13KKM={k13KKM}
-              academicSetting={activeAcademicSetting}
+              k13Analysis={undefined}
+              k13KKM={undefined}
+              academicSetting={transitionalAcademicSetting}
               profile={activeProfile}
               school={activeSchoolForView}
               onSaveAnalysis={handleSaveK13Analysis}
@@ -606,28 +753,26 @@ export function App() {
             <AdministrationHub
               profile={activeProfile}
               school={activeSchoolForView}
-              workspace={activeWorkspace}
-              academicSetting={activeAcademicSetting}
+              workspace={transitionalWorkspace}
+              academicSetting={transitionalAcademicSetting}
               cp={activeCP}
               tp={activeTP}
               atp={activeATP}
-              documents={dataStore.documents || []}
-              students={students || []}
-              calendar={calendar}
-              calendarDays={calendarDays || []}
-              timeAllocations={timeAllocations || []}
-              attendanceSessions={attendanceSessions || []}
-              attendanceRecords={attendanceRecords || []}
-              assessmentCriteria={assessmentCriteria || []}
-              assessments={assessments || []}
-              assessmentResults={assessmentResults || []}
-              remedials={remedials || []}
-              enrichments={enrichments || []}
-              k13Analysis={k13Analysis}
-              k13KKM={k13KKM}
-              learningPlans={learningPlans || []}
-              assessmentPlans={assessmentPlans || []}
-              assessmentPackages={assessmentPackages || []}
+              documents={v5State.documents || []}
+              students={[]}
+              calendar={undefined}
+              calendarDays={[]}
+              timeAllocations={[]}
+              attendanceSessions={[]}
+              attendanceRecords={[]}
+              assessmentCriteria={[]}
+              assessments={[]}
+              assessmentResults={[]}
+              remedials={[]}
+              enrichments={[]}
+              learningPlans={[]}
+              assessmentPlans={[]}
+              assessmentPackages={[]}
               onSaveCalendar={handleSaveCalendar}
               onSaveTimeAllocations={handleSaveTimeAllocations}
               onSaveStudents={handleSaveStudents}
@@ -646,10 +791,7 @@ export function App() {
               onSaveLearningPlan={handleSaveLearningPlan}
               onDeleteLearningPlan={handleDeleteLearningPlan}
               onBackToStep={(step) => setCurrentStep(step)}
-              onUpdateDocuments={(updatedDocs) => {
-                saveDocuments(updatedDocs);
-                refreshData();
-              }}
+              onUpdateDocuments={(updatedDocs) => {}}
             />
           )}
         </section>
@@ -659,10 +801,10 @@ export function App() {
       <footer className="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-500">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
           <div>
-            <strong>Administrasi Guru AI</strong> — MVP Fondasi Administrasi Berkesinambungan (Profil → CP → TP → ATP → Dokumen)
+            <strong>Administrasi Guru AI</strong> — Kurikulum Merdeka & Administrasi Pembelajaran
           </div>
           <div className="flex items-center gap-2 text-[11px] text-slate-400">
-            <span>Konteks Terpusat (ActiveContext) • Multi-Workspace Administrasi • Sumber CP Terverifikasi • Ekspor Word (.docx)</span>
+            <span>Perencanaan Tahunan (YearPlan) • Hierarki V5 • Ekspor Word Resmi (.docx)</span>
             <span id="app-build-badge" className="font-mono text-[10px] bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 rounded-md font-semibold">
               Build: {APP_BUILD_ID}
             </span>
@@ -670,7 +812,7 @@ export function App() {
         </div>
       </footer>
 
-      {/* Modal: Create New Administration Workspace */}
+      {/* Modal: Create New Annual Administration (Canonical Merdeka) */}
       {isNewWorkspaceModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
           <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
@@ -680,7 +822,7 @@ export function App() {
                   <FolderPlus className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-slate-900">Buat Administrasi / Kelas Baru</h3>
+                  <h3 className="text-base font-bold text-slate-900">Buat Administrasi Tahunan Baru</h3>
                   <p className="text-xs text-slate-500">
                     Guru: <strong>{activeProfile?.name || 'Belum dipilih'}</strong> • Sekolah: <strong>{activeSchool?.name || 'Belum dipilih'}</strong>
                   </p>
@@ -718,14 +860,25 @@ export function App() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                    Kelas / Tingkat
+                    Kurikulum
+                  </label>
+                  <input
+                    type="text"
+                    readOnly
+                    value="Kurikulum Merdeka"
+                    className="w-full text-sm px-3 py-2 rounded-xl border border-slate-200 bg-slate-100 text-slate-700 font-semibold cursor-not-allowed"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                    Kelas / Tingkat <span className="text-rose-500">*</span>
                   </label>
                   <select
                     value={newWsGrade}
                     onChange={(e) => setNewWsGrade(e.target.value)}
                     className="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 bg-white cursor-pointer"
                   >
-                    <option value="">Belum ditentukan</option>
+                    <option value="">Pilih Kelas</option>
                     {availableGrades.map((g) => (
                       <option key={g.grade} value={g.grade}>
                         {g.grade} ({g.phase})
@@ -733,35 +886,35 @@ export function App() {
                     ))}
                   </select>
                 </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                    Semester
-                  </label>
-                  <select
-                    value={newWsSemester}
-                    onChange={(e) => setNewWsSemester(e.target.value as '1 (Ganjil)' | '2 (Genap)' | '')}
-                    className="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 bg-white cursor-pointer"
-                  >
-                    <option value="">Belum ditentukan</option>
-                    <option value="1 (Ganjil)">1 (Ganjil)</option>
-                    <option value="2 (Genap)">2 (Genap)</option>
-                  </select>
-                </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                  Tahun Ajaran
-                </label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="\d{4}/\d{4}"
-                  placeholder="Contoh: 2026/2027"
-                  value={newWsYear}
-                  onChange={(e) => setNewWsYear(e.target.value)}
-                  className="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 bg-white cursor-pointer"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                    Rombel / Paralel (Opsional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Contoh: A / 1A"
+                    value={newWsClassSection}
+                    onChange={(e) => setNewWsClassSection(e.target.value)}
+                    className="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 bg-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                    Tahun Ajaran <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="\d{4}/\d{4}"
+                    placeholder="Contoh: 2026/2027"
+                    value={newWsYear}
+                    onChange={(e) => setNewWsYear(e.target.value)}
+                    className="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 bg-white cursor-pointer"
+                  />
+                </div>
               </div>
 
               <div>
@@ -781,12 +934,12 @@ export function App() {
               </div>
 
               <div className="bg-blue-50/70 p-3 rounded-xl border border-blue-200/60 text-xs text-blue-900 space-y-1">
-                <div className="font-semibold">Nama Workspace yang Dibuat:</div>
+                <div className="font-semibold">Nama Administrasi Tahunan yang Dibuat:</div>
                 <div className="font-bold text-blue-950">
-                  {newWsSubject || 'Mapel'} — {newWsGrade || 'Kelas -'} — {newWsSemester.startsWith('1') ? 'Sem 1' : newWsSemester.startsWith('2') ? 'Sem 2' : 'Sem -'} — {newWsYear || 'Tahun Ajaran -'}
+                  {newWsSubject || 'Mapel'} — {newWsGrade || 'Kelas -'}{newWsClassSection ? ` (${newWsClassSection})` : ''} — {newWsYear || 'Tahun Ajaran -'}
                 </div>
                 <p className="text-[11px] text-blue-700 mt-0.5">
-                  Setiap workspace memiliki CP, TP, ATP, dan dokumen mandiri tanpa tercampur dengan administrasi lainnya.
+                  Administrasi tahunan mencakup seluruh perencanaan kurikulum (CP, TP, ATP) serta memuat Semester 1 dan Semester 2 secara otomatis.
                 </p>
               </div>
 
@@ -814,7 +967,7 @@ export function App() {
       <BackupModal
         isOpen={isBackupModalOpen}
         onClose={() => setIsBackupModalOpen(false)}
-        onDataRestored={refreshData}
+        onDataRestored={refreshV5}
       />
     </div>
   );

@@ -58,6 +58,9 @@ jobs:
       - name: Test F1 Annual & Semester Scope Contract
         run: npx tsx scripts/testF1AnnualSemesterScopeContract.ts
 
+      - name: Test Merdeka V5 App Shell Contract
+        run: npx tsx scripts/testMerdekaV5AppShellContract.ts
+
       - name: Test AI Transport Hardening
         run: npx tsx scripts/testAITransportHardening.ts
 
