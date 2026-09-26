@@ -39,6 +39,7 @@ import {
   setActiveYearPlanV5,
   deleteWorkspaceV5,
   renameWorkspaceV5,
+  saveCPV5,
 } from './services/storageV5';
 import { getRuntimeContextV5 } from './services/runtimeV5';
 import {
@@ -490,7 +491,29 @@ export function App() {
   };
 
   const handleSaveCP = (cp: CPData) => {
-    // CP persistence cutover is deferred to future phase
+    if (!activeYearPlan) {
+      setAppNotice({
+        type: 'error',
+        message: 'Tidak ada Tahun Ajaran (YearPlan) aktif untuk menyimpan Capaian Pembelajaran (CP).',
+      });
+      return;
+    }
+
+    try {
+      const canonicalCP: CPData = {
+        ...cp,
+        id: cp.id && cp.id.trim() ? cp.id : `cp-${activeYearPlan.id}`,
+        academicSettingId: activeYearPlan.id,
+      };
+
+      saveCPV5(activeYearPlan.id, canonicalCP);
+      refreshV5();
+    } catch (err: any) {
+      setAppNotice({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Gagal menyimpan CP ke penyimpanan tahunan.',
+      });
+    }
   };
 
   const handleSaveCPAnalysis = (analysis: CPAnalysisData) => {
