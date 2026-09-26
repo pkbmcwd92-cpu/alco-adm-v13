@@ -436,6 +436,51 @@ export function App() {
     };
   }, [activeYearPlan, activeProfile]);
 
+  const isActiveSemesterValid =
+    !!activeSemesterPlan &&
+    semesterPlansForActiveYear.some(
+      (sp) => sp.id === activeSemesterPlan.id
+    );
+
+  const semesterAcademicSetting = useMemo<AcademicSetting | undefined>(() => {
+    if (!activeYearPlan || !activeSemesterPlan || !isActiveSemesterValid) {
+      return undefined;
+    }
+    return {
+      id: activeSemesterPlan.id,
+      profileId: activeYearPlan.profileId,
+      curriculum: 'Kurikulum Merdeka',
+      curriculumType: activeYearPlan.curriculumType || 'KURIKULUM_MERDEKA',
+      academicYear: activeYearPlan.academicYear,
+      semester:
+        activeSemesterPlan.semester === 1
+          ? '1 (Ganjil)'
+          : '2 (Genap)',
+      level: activeYearPlan.level,
+      grade: activeYearPlan.grade,
+      phase: activeYearPlan.phase || '',
+      subject: activeYearPlan.subject,
+      updatedAt: activeSemesterPlan.updatedAt,
+    };
+  }, [activeYearPlan, activeSemesterPlan, isActiveSemesterValid]);
+
+  const effectiveAdminAcademicSetting = isK13(transitionalAcademicSetting)
+    ? transitionalAcademicSetting
+    : semesterAcademicSetting;
+
+  const handleSelectStep = (step: WorkflowStepId) => {
+    const isMerdeka = !isK13(transitionalAcademicSetting);
+    if (isMerdeka && step === 'admin' && !isActiveSemesterValid) {
+      setCurrentStep('semester');
+      setAppNotice({
+        type: 'warning',
+        message: 'Pilih Semester 1 atau Semester 2 terlebih dahulu sebelum membuka Administrasi.',
+      });
+      return;
+    }
+    setCurrentStep(step);
+  };
+
   const transitionalActiveContext = useMemo<ActiveContext>(() => {
     return {
       profileId: activeProfile?.id || activeYearPlan?.profileId || '',
@@ -715,7 +760,7 @@ export function App() {
         {/* Workflow Stepper & Context Banner */}
         <WorkflowStepper
           currentStep={currentStep}
-          onSelectStep={(step) => setCurrentStep(step)}
+          onSelectStep={handleSelectStep}
           profile={activeProfile}
           school={activeSchool}
           workspace={transitionalWorkspace}
@@ -724,6 +769,7 @@ export function App() {
           cpAnalysis={activeCPAnalysis}
           tp={activeTP}
           atp={activeATP}
+          activeSemesterPlan={activeSemesterPlan}
           k13Analysis={undefined}
           k13KKM={undefined}
         />
@@ -904,12 +950,12 @@ export function App() {
           )}
 
           {/* SHARED ADMINISTRATION & DOCS EXPORT */}
-          {currentStep === 'admin' && (
+          {currentStep === 'admin' && effectiveAdminAcademicSetting && (
             <AdministrationHub
               profile={activeProfile}
               school={activeSchoolForView}
               workspace={transitionalWorkspace}
-              academicSetting={transitionalAcademicSetting}
+              academicSetting={effectiveAdminAcademicSetting}
               cp={activeCP}
               tp={activeTP}
               atp={activeATP}

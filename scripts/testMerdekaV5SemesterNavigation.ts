@@ -245,6 +245,9 @@ const typesSource = fs.readFileSync(typesPath, 'utf-8');
 const semesterSelectorPath = path.resolve(process.cwd(), 'src/components/SemesterSelector.tsx');
 const semesterSelectorSource = fs.readFileSync(semesterSelectorPath, 'utf-8');
 
+const adminHubPath = path.resolve(process.cwd(), 'src/components/administration/AdministrationHub.tsx');
+const adminHubSource = fs.readFileSync(adminHubPath, 'utf-8');
+
 // -----------------------------------------------------------------------------
 // TEST 1: WorkflowStepId contains 'semester'
 // -----------------------------------------------------------------------------
@@ -561,6 +564,207 @@ runTest('19. WorkflowEngine defines semester step as READY but isComplete: false
     !semesterStepBody.includes('isComplete: isATPComplete'),
     'Semester step must reject isComplete: isATPComplete'
   );
+});
+
+// -----------------------------------------------------------------------------
+// TEST 20: App Derives isActiveSemesterValid from activeSemesterPlan & semesterPlansForActiveYear
+// -----------------------------------------------------------------------------
+runTest('20. App.tsx derives isActiveSemesterValid without local authority or independent state', () => {
+  assert.ok(
+    appSource.includes('const isActiveSemesterValid ='),
+    'App.tsx must define isActiveSemesterValid'
+  );
+  assert.ok(
+    appSource.includes('semesterPlansForActiveYear.some('),
+    'App.tsx must check that activeSemesterPlan is in semesterPlansForActiveYear'
+  );
+  assert.ok(
+    !appSource.includes('useState<string>("semester-') &&
+      !appSource.includes('useState<string | null>(null)') &&
+      !appSource.includes('useState<SemesterPlan>'),
+    'App.tsx must not maintain an independent useState for semester authority'
+  );
+});
+
+// -----------------------------------------------------------------------------
+// TEST 21: semesterAcademicSetting Compatibility Projection Semantics
+// -----------------------------------------------------------------------------
+runTest('21. App.tsx creates semesterAcademicSetting compatibility projection without fake JP', () => {
+  assert.ok(
+    appSource.includes('const semesterAcademicSetting = useMemo<AcademicSetting | undefined>('),
+    'App.tsx must define semesterAcademicSetting via useMemo'
+  );
+  assert.ok(
+    appSource.includes("activeSemesterPlan.semester === 1\n          ? '1 (Ganjil)'\n          : '2 (Genap)'") ||
+      appSource.includes("activeSemesterPlan.semester === 1 ? '1 (Ganjil)' : '2 (Genap)'"),
+    'semesterAcademicSetting must project semester number to 1 (Ganjil) / 2 (Genap)'
+  );
+  assert.ok(
+    appSource.includes('id: activeSemesterPlan.id,'),
+    'semesterAcademicSetting must use activeSemesterPlan.id as its canonical ID'
+  );
+  assert.ok(
+    !appSource.includes('subjectWeeklyJP:') && !appSource.includes('totalHoursPerWeek:'),
+    'semesterAcademicSetting must not invent fake weekly JP or defaults'
+  );
+});
+
+// -----------------------------------------------------------------------------
+// TEST 22: WorkflowStepper Receives activeSemesterPlan & Enforces Merdeka Gate
+// -----------------------------------------------------------------------------
+runTest('22. WorkflowStepper receives activeSemesterPlan and gates Merdeka Semester & Admin steps', () => {
+  assert.ok(
+    stepperSource.includes('activeSemesterPlan?: SemesterPlan;'),
+    'WorkflowStepperProps must include activeSemesterPlan?: SemesterPlan'
+  );
+  assert.ok(
+    stepperSource.includes('const hasSelectedSemester = !!activeSemesterPlan;'),
+    'WorkflowStepper must compute hasSelectedSemester based on activeSemesterPlan'
+  );
+
+  const merdekaBlockMatch = stepperSource.match(/isMerdekaActive\s*\?\s*\[([\s\S]*?)\]\s*:/);
+  assert.ok(merdekaBlockMatch, 'isMerdekaActive steps array must exist');
+  const merdekaBlock = merdekaBlockMatch[1];
+
+  // Semester step in Stepper
+  assert.ok(
+    merdekaBlock.includes("status: hasSelectedSemester ? 'COMPLETE' : stepStates.semester.status"),
+    "Semester step in Stepper must be COMPLETE when hasSelectedSemester is true"
+  );
+  assert.ok(
+    merdekaBlock.includes('isComplete: hasSelectedSemester ? true : stepStates.semester.isComplete'),
+    'Semester step in Stepper must be isComplete: true only when selected'
+  );
+
+  // Admin step in Stepper
+  assert.ok(
+    merdekaBlock.includes("status: !hasSelectedSemester ? 'BLOCKED' : 'READY'"),
+    "Admin step in Stepper must be BLOCKED when no semester is selected and READY when selected"
+  );
+  assert.ok(
+    merdekaBlock.includes('isLocked: !hasSelectedSemester'),
+    'Admin step must be locked when no semester is selected'
+  );
+  assert.ok(
+    merdekaBlock.includes("lockReason: !hasSelectedSemester ? 'Pilih semester aktif terlebih dahulu' : undefined"),
+    "Admin step lockReason must state 'Pilih semester aktif terlebih dahulu'"
+  );
+  assert.ok(
+    merdekaBlock.includes('isComplete: false'),
+    'Admin step must NOT claim isComplete: true merely from ATP'
+  );
+});
+
+// -----------------------------------------------------------------------------
+// TEST 23: App.tsx Passes activeSemesterPlan to WorkflowStepper
+// -----------------------------------------------------------------------------
+runTest('23. App.tsx passes activeSemesterPlan and handleSelectStep guard to WorkflowStepper', () => {
+  assert.ok(
+    appSource.includes('activeSemesterPlan={activeSemesterPlan}'),
+    'App.tsx must pass activeSemesterPlan to WorkflowStepper'
+  );
+  assert.ok(
+    appSource.includes('onSelectStep={handleSelectStep}'),
+    'App.tsx must pass guarded handleSelectStep to WorkflowStepper'
+  );
+});
+
+// -----------------------------------------------------------------------------
+// TEST 24: Direct Navigation Guard in App.tsx
+// -----------------------------------------------------------------------------
+runTest("24. handleSelectStep intercepts 'admin' when semester is invalid and routes to 'semester'", () => {
+  const handlerMatch = appSource.match(/const handleSelectStep = \(([\s\S]*?)\n  \};/);
+  assert.ok(handlerMatch, 'handleSelectStep function must exist in App.tsx');
+  const handlerBody = handlerMatch[0];
+
+  assert.ok(
+    handlerBody.includes("if (isMerdeka && step === 'admin' && !isActiveSemesterValid)"),
+    "handleSelectStep must check if Merdeka, step === 'admin', and !isActiveSemesterValid"
+  );
+  assert.ok(
+    handlerBody.includes("setCurrentStep('semester')"),
+    "handleSelectStep must redirect to 'semester'"
+  );
+  assert.ok(
+    handlerBody.includes('Pilih Semester 1 atau Semester 2 terlebih dahulu sebelum membuka Administrasi.'),
+    'handleSelectStep must show clear warning notice'
+  );
+});
+
+// -----------------------------------------------------------------------------
+// TEST 25: AdministrationHub Input Projection for Merdeka
+// -----------------------------------------------------------------------------
+runTest('25. Merdeka AdministrationHub receives semesterAcademicSetting and is not rendered if undefined', () => {
+  assert.ok(
+    appSource.includes('const effectiveAdminAcademicSetting = isK13(transitionalAcademicSetting)'),
+    'App.tsx must derive effectiveAdminAcademicSetting based on curriculum'
+  );
+  assert.ok(
+    appSource.includes("{currentStep === 'admin' && effectiveAdminAcademicSetting && ("),
+    "App.tsx must gate AdministrationHub render with effectiveAdminAcademicSetting"
+  );
+  assert.ok(
+    appSource.includes('academicSetting={effectiveAdminAcademicSetting}'),
+    'AdministrationHub must receive effectiveAdminAcademicSetting'
+  );
+});
+
+// -----------------------------------------------------------------------------
+// TEST 26: AdministrationHub Back Navigation to Semester for Merdeka
+// -----------------------------------------------------------------------------
+runTest("26. AdministrationHub back button navigates to 'semester' with label (07) for Merdeka", () => {
+  assert.ok(
+    adminHubSource.includes("onClick={() => onBackToStep(isK13Active ? 'k13-tujuan' : 'semester')}"),
+    "AdministrationHub back button must call onBackToStep('semester') for Merdeka"
+  );
+  assert.ok(
+    adminHubSource.includes("{isK13Active ? '← Kembali ke Tujuan & IPK (05)' : '← Kembali ke Pilih Semester (07)'}"),
+    "AdministrationHub back button label must be '← Kembali ke Pilih Semester (07)' for Merdeka"
+  );
+});
+
+// -----------------------------------------------------------------------------
+// TEST 27: K13 Back Navigation Remains Preserved
+// -----------------------------------------------------------------------------
+runTest("27. K13 back button navigates to 'k13-tujuan' with label (05)", () => {
+  assert.ok(
+    adminHubSource.includes("'k13-tujuan'"),
+    "AdministrationHub back button must keep 'k13-tujuan' for K13"
+  );
+  assert.ok(
+    adminHubSource.includes("'← Kembali ke Tujuan & IPK (05)'"),
+    "AdministrationHub back button must keep '← Kembali ke Tujuan & IPK (05)' for K13"
+  );
+});
+
+// -----------------------------------------------------------------------------
+// TEST 28: Full B.4 Save Handlers Inactivity Verification
+// -----------------------------------------------------------------------------
+runTest('28. All B.4 downstream save handlers in App.tsx remain strictly no-op', () => {
+  const noOpHandlers = [
+    'handleSaveCalendar',
+    'handleSaveTimeAllocations',
+    'handleSaveStudents',
+    'handleSaveAttendance',
+    'handleSaveCriteria',
+    'handleSaveAssessment',
+    'handleDeleteAssessment',
+    'handleSaveAssessmentPlan',
+    'handleDeleteAssessmentPlan',
+    'handleSaveAssessmentPackage',
+    'handleDeleteAssessmentPackage',
+    'handleSaveRemedials',
+    'handleSaveEnrichments',
+    'handleSaveLearningPlan',
+    'handleDeleteLearningPlan',
+  ];
+
+  for (const handler of noOpHandlers) {
+    assert.ok(
+      appSource.includes(`const ${handler} = `),
+      `App.tsx must define ${handler}`
+    );
+  }
 });
 
 console.log(`\nAll ${totalTests} Merdeka V5 Semester Navigation audit tests PASSED successfully!\n`);

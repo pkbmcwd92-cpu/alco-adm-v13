@@ -287,10 +287,10 @@ export const AdministrationHub: React.FC<AdministrationHubProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => onBackToStep(isK13Active ? 'k13-tujuan' : 'atp')}
+              onClick={() => onBackToStep(isK13Active ? 'k13-tujuan' : 'semester')}
               className="text-xs text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-700 transition-colors cursor-pointer"
             >
-              {isK13Active ? '← Kembali ke Tujuan & IPK (05)' : '← Kembali ke Alur ATP (06)'}
+              {isK13Active ? '← Kembali ke Tujuan & IPK (05)' : '← Kembali ke Pilih Semester (07)'}
             </button>
           </div>
         </div>

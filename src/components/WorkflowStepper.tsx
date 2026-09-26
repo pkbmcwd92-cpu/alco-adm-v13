@@ -28,6 +28,7 @@ import {
   ATPData,
   AdministrationWorkspace,
   CPAnalysisData,
+  SemesterPlan,
   K13Analysis,
   K13KKM,
 } from '../types';
@@ -45,6 +46,7 @@ interface WorkflowStepperProps {
   cpAnalysis?: CPAnalysisData;
   tp?: TPData;
   atp?: ATPData;
+  activeSemesterPlan?: SemesterPlan;
   k13Analysis?: K13Analysis;
   k13KKM?: K13KKM;
 }
@@ -60,12 +62,14 @@ export const WorkflowStepper: React.FC<WorkflowStepperProps> = ({
   cpAnalysis,
   tp,
   atp,
+  activeSemesterPlan,
   k13Analysis,
   k13KKM,
 }) => {
   const curType = getCurriculumTypeFromSetting(academicSetting);
   const isK13Active = curType === 'K13';
   const isMerdekaActive = curType === 'KURIKULUM_MERDEKA';
+  const hasSelectedSemester = !!activeSemesterPlan;
 
   // Validate workflow dependencies centrally
   const validationReport = validateWorkflowDependencies({
@@ -246,11 +250,11 @@ export const WorkflowStepper: React.FC<WorkflowStepperProps> = ({
           title: 'SEMESTER',
           sub: 'Pilih Semester Aktif',
           icon: <Calendar className="w-4 h-4" />,
-          status: stepStates.semester.status,
-          isComplete: stepStates.semester.isComplete,
-          isLocked: stepStates.semester.isBlocked,
+          status: hasSelectedSemester ? 'COMPLETE' : stepStates.semester.status,
+          isComplete: hasSelectedSemester ? true : stepStates.semester.isComplete,
+          isLocked: hasSelectedSemester ? false : stepStates.semester.isBlocked,
           isStale: stepStates.semester.isStale,
-          lockReason: stepStates.semester.reason,
+          lockReason: hasSelectedSemester ? undefined : stepStates.semester.reason,
         },
         {
           id: 'admin',
@@ -258,11 +262,11 @@ export const WorkflowStepper: React.FC<WorkflowStepperProps> = ({
           title: 'ADMINISTRASI',
           sub: 'Asesmen & Dokumen',
           icon: <FileCheck2 className="w-4 h-4" />,
-          status: stepStates.admin.status,
-          isComplete: stepStates.admin.isComplete,
-          isLocked: stepStates.admin.isBlocked,
+          status: !hasSelectedSemester ? 'BLOCKED' : 'READY',
+          isComplete: false,
+          isLocked: !hasSelectedSemester,
           isStale: stepStates.admin.isStale,
-          lockReason: stepStates.admin.reason,
+          lockReason: !hasSelectedSemester ? 'Pilih semester aktif terlebih dahulu' : undefined,
         },
       ]
     : [
