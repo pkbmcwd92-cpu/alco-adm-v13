@@ -637,7 +637,7 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
         )}
         {hasUnknownJP && (
           <p className="text-xs text-amber-700 bg-amber-50 p-2.5 rounded-xl border border-amber-200 mt-2 font-medium">
-            * Terdapat langkah ATP yang belum memiliki alokasi JP. Harap lengkapi JP sebelum memfinalisasi alur.
+            * Terdapat langkah ATP yang belum memiliki alokasi JP. Alokasi waktu dapat dilengkapi pada tahap perencanaan waktu berikutnya.
           </p>
         )}
       </div>

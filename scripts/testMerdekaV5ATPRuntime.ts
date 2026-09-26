@@ -659,4 +659,21 @@ runTest('Runtime Read Model: getRuntimeContextV5().annualData.atp reflects activ
   assert.strictEqual(runtime.annualData?.atp, undefined);
 });
 
+// -----------------------------------------------------------------------------
+// TEST 13: Unresolved JP Guidance Copy in ATPManager.tsx
+// -----------------------------------------------------------------------------
+runTest('Unresolved JP Guidance Copy: ATPManager clarifies that JP can be completed in time allocation step', () => {
+  const atpManagerPath = path.resolve(process.cwd(), 'src/components/ATPManager.tsx');
+  const atpManagerSource = fs.readFileSync(atpManagerPath, 'utf-8');
+
+  assert.ok(
+    !atpManagerSource.includes('Harap lengkapi JP sebelum memfinalisasi alur'),
+    'Old guidance phrase "Harap lengkapi JP sebelum memfinalisasi alur" must be absent'
+  );
+  assert.ok(
+    atpManagerSource.includes('Alokasi waktu dapat dilengkapi pada tahap perencanaan waktu berikutnya'),
+    'New guidance phrase "Alokasi waktu dapat dilengkapi pada tahap perencanaan waktu berikutnya" must be present'
+  );
+});
+
 console.log(`\nAll ${totalTests} Merdeka V5 ATP Runtime Persistence audit tests PASSED successfully!\n`);
