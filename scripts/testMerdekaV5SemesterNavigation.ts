@@ -538,4 +538,29 @@ runTest('18. Semester module persistence handlers in App.tsx remain unactivated 
   );
 });
 
+// -----------------------------------------------------------------------------
+// TEST 19: Semester Step Incomplete Semantics in WorkflowEngine
+// -----------------------------------------------------------------------------
+runTest('19. WorkflowEngine defines semester step as READY but isComplete: false until explicit selection', () => {
+  const workflowEnginePath = path.resolve(process.cwd(), 'src/services/workflowEngine.ts');
+  const workflowEngineSource = fs.readFileSync(workflowEnginePath, 'utf-8');
+
+  const semesterStepMatch = workflowEngineSource.match(/stepStates\.semester\s*=\s*\{([\s\S]*?)\};/);
+  assert.ok(semesterStepMatch, 'stepStates.semester definition must exist in workflowEngine.ts');
+  const semesterStepBody = semesterStepMatch[1];
+
+  assert.ok(
+    semesterStepBody.includes("status: isATPComplete ? 'READY' : 'BLOCKED'"),
+    "Semester step must define status: isATPComplete ? 'READY' : 'BLOCKED'"
+  );
+  assert.ok(
+    semesterStepBody.includes('isComplete: false'),
+    'Semester step must define isComplete: false (ATP completion does not imply semester selection completion)'
+  );
+  assert.ok(
+    !semesterStepBody.includes('isComplete: isATPComplete'),
+    'Semester step must reject isComplete: isATPComplete'
+  );
+});
+
 console.log(`\nAll ${totalTests} Merdeka V5 Semester Navigation audit tests PASSED successfully!\n`);

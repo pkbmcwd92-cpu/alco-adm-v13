@@ -614,7 +614,7 @@ export function validateWorkflowDependencies(
       id: 'semester',
       status: isATPComplete ? 'READY' : 'BLOCKED',
       isBlocked: !isATPComplete,
-      isComplete: isATPComplete,
+      isComplete: false,
       isStale: isATPStale,
       reason: !isATPComplete ? 'Memerlukan penyusunan Alur Tujuan Pembelajaran (ATP) terlebih dahulu' : undefined,
     };
