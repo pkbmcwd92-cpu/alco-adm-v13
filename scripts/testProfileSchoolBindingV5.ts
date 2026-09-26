@@ -265,4 +265,51 @@ runTest('6. ProfileManager.tsx source contract: No false fallbacks and explicit 
   );
 });
 
-console.log('\nAll 6 Profile ↔ Sekolah Utama Binding contract tests PASSED successfully!\n');
+// 7. Profile without schoolId: does not resolve a fake school in runtime model
+runTest('7. Runtime read model: profile without schoolId resolves activeSchool as undefined (no fake school)', () => {
+  const state = loadStorageV5();
+  const unboundProf = createProfileV5({
+    name: 'Guru Tanpa Sekolah',
+    nip: '199505052020051005',
+    status: 'PNS',
+    defaultLevel: 'SMA',
+    defaultSubject: 'Fisika',
+  });
+
+  setActiveProfileV5(unboundProf.id);
+  const ctx = getRuntimeContextV5();
+  assert.strictEqual(ctx.activeProfile?.id, unboundProf.id);
+  assert.strictEqual(ctx.activeProfile?.schoolId, undefined);
+  assert.strictEqual(ctx.activeSchool, undefined, 'activeSchool must be undefined for unbound profile');
+});
+
+// 8. ProfileManager UI contract: Explicit empty state and guards for unbound school
+runTest('8. ProfileManager.tsx source contract: Explicit empty state message and UI guards for unbound school', () => {
+  const pmPath = path.resolve(process.cwd(), 'src/components/ProfileManager.tsx');
+  const pmSource = fs.readFileSync(pmPath, 'utf-8');
+
+  // Verify explicit empty state text
+  assert.ok(
+    pmSource.includes('Profil ini belum memiliki Sekolah Utama.'),
+    'ProfileManager must render exact message: "Profil ini belum memiliki Sekolah Utama."'
+  );
+  assert.ok(
+    pmSource.includes('Pilih sekolah dari daftar master di bawah, atau tambahkan sekolah baru terlebih dahulu.'),
+    'ProfileManager must render instruction: "Pilih sekolah dari daftar master di bawah, atau tambahkan sekolah baru terlebih dahulu."'
+  );
+
+  // Verify edit school button is guarded by actual profileSchool
+  assert.ok(
+    pmSource.includes('{profileSchool && (\n                  <button\n                    id="btn-edit-school"') ||
+    pmSource.includes('profileSchool &&') && pmSource.includes('btn-edit-school'),
+    'Ubah Data Sekolah button must be conditionally rendered only when profileSchool exists'
+  );
+
+  // Verify principal history is guarded by actual profileSchool
+  assert.ok(
+    pmSource.includes('Pilih Sekolah Utama terlebih dahulu untuk mengelola data Kepala Sekolah.'),
+    'Principal History card must show placeholder message when no profileSchool is bound'
+  );
+});
+
+console.log('\nAll Profile ↔ Sekolah Utama Binding contract tests PASSED successfully!\n');

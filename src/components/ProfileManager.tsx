@@ -142,10 +142,10 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
   }, [activeProfile?.id, isEditingProfile, schools]);
 
   useEffect(() => {
-    if (!isEditingSchool) {
-      setSchoolForm({ ...activeSchool });
+    if (!isEditingSchool && profileSchool) {
+      setSchoolForm({ ...profileSchool });
     }
-  }, [activeSchool.id, isEditingSchool]);
+  }, [profileSchool?.id, isEditingSchool]);
 
   useEffect(() => {
     if (pendingDeleteId) {
@@ -206,8 +206,9 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
   };
 
   const handleOpenEditSchool = () => {
+    if (!profileSchool) return;
     setSchoolModalMode('edit');
-    setSchoolForm({ ...activeSchool });
+    setSchoolForm({ ...profileSchool });
     setSearchQuery('');
     setSearchResults([]);
     setSearchNotice(null);
@@ -262,6 +263,9 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
 
   const handleAddPrincipalHistorySubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!profileSchool) {
+      return;
+    }
     if (!historyForm.name.trim()) {
       alert('Nama Kepala Sekolah wajib diisi');
       return;
@@ -269,7 +273,7 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
     if (onSavePrincipalHistory) {
       onSavePrincipalHistory({
         id: `ph-${Date.now()}`,
-        schoolId: activeSchool.id,
+        schoolId: profileSchool.id,
         name: historyForm.name.trim(),
         nip: historyForm.nip.trim(),
         startDate: historyForm.startDate || new Date().toISOString().slice(0, 10),
@@ -648,16 +652,18 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
                 <span className="text-[11px] text-slate-500 font-medium">1 Profil Guru = 1 Sekolah Utama</span>
               </div>
               <div className="flex items-center gap-1.5">
-                <button
-                  id="btn-edit-school"
-                  type="button"
-                  onClick={handleOpenEditSchool}
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg transition cursor-pointer"
-                  title="Ubah Data Sekolah yang Sedang Digunakan"
-                >
-                  <Edit2 className="w-3.5 h-3.5" />
-                  <span>Ubah Data Sekolah</span>
-                </button>
+                {profileSchool && (
+                  <button
+                    id="btn-edit-school"
+                    type="button"
+                    onClick={handleOpenEditSchool}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg transition cursor-pointer"
+                    title="Ubah Data Sekolah yang Sedang Digunakan"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                    <span>Ubah Data Sekolah</span>
+                  </button>
+                )}
                 <button
                   id="btn-add-new-school-master"
                   type="button"
@@ -671,99 +677,109 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
               </div>
             </div>
 
-            {/* School Details */}
-            <div className="space-y-3">
-              <div>
-                <h5 className="font-bold text-slate-900 text-base">{activeSchool.name || 'Nama Sekolah Belum Diisi'}</h5>
-                <p className="text-xs text-slate-500 mt-0.5">NPSN: <span className="font-semibold text-slate-700">{activeSchool.npsn || '-'}</span></p>
-              </div>
-
-              <div className="space-y-2 text-xs text-slate-600">
-                <div className="flex items-start gap-2">
-                  <MapPin className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-                  <span>{SchoolIdentityProvider.formatFullAddress(activeSchool)}</span>
+            {/* School Details or Explicit Empty State */}
+            {profileSchool ? (
+              <div className="space-y-3">
+                <div>
+                  <h5 className="font-bold text-slate-900 text-base">{profileSchool.name}</h5>
+                  <p className="text-xs text-slate-500 mt-0.5">NPSN: <span className="font-semibold text-slate-700">{profileSchool.npsn || '-'}</span></p>
                 </div>
 
-                <div className="flex items-start gap-2 pt-2 border-t border-slate-100">
-                  <ShieldCheck className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-                  <div className="flex-1 space-y-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-semibold text-slate-800">Kepala Sekolah Aktif:</span>
-                      {activeSchool.verificationStatus === 'verified' ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                          Terverifikasi Resmi
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
-                          Diisi Guru
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-slate-900 font-bold text-xs">{activeSchool.principalName || 'Belum diisi'}</div>
-                    <div className="text-slate-500 text-[11px]">NIP: {activeSchool.principalNip || 'Belum diisi'}</div>
-                    {activeSchool.principalSource && (
-                      <div className="text-[10px] text-slate-400 pt-0.5 flex items-center gap-1.5 flex-wrap">
-                        <span>Sumber: <strong className="text-slate-600">{activeSchool.principalSource}</strong></span>
-                        {activeSchool.principalSourceUrl && (
-                          <a
-                            href={activeSchool.principalSourceUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-600 hover:text-blue-800 underline inline-flex items-center gap-0.5"
-                          >
-                            <span>Tautan</span>
-                            <ExternalLink className="w-2.5 h-2.5" />
-                          </a>
+                <div className="space-y-2 text-xs text-slate-600">
+                  <div className="flex items-start gap-2">
+                    <MapPin className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
+                    <span>{SchoolIdentityProvider.formatFullAddress(profileSchool)}</span>
+                  </div>
+
+                  <div className="flex items-start gap-2 pt-2 border-t border-slate-100">
+                    <ShieldCheck className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
+                    <div className="flex-1 space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold text-slate-800">Kepala Sekolah Aktif:</span>
+                        {profileSchool.verificationStatus === 'verified' ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                            Terverifikasi Resmi
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                            Diisi Guru
+                          </span>
                         )}
                       </div>
-                    )}
+                      <div className="text-slate-900 font-bold text-xs">{profileSchool.principalName || 'Belum diisi'}</div>
+                      <div className="text-slate-500 text-[11px]">NIP: {profileSchool.principalNip || 'Belum diisi'}</div>
+                      {profileSchool.principalSource && (
+                        <div className="text-[10px] text-slate-400 pt-0.5 flex items-center gap-1.5 flex-wrap">
+                          <span>Sumber: <strong className="text-slate-600">{profileSchool.principalSource}</strong></span>
+                          {profileSchool.principalSourceUrl && (
+                            <a
+                              href={profileSchool.principalSourceUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:text-blue-800 underline inline-flex items-center gap-0.5"
+                            >
+                              <span>Tautan</span>
+                              <ExternalLink className="w-2.5 h-2.5" />
+                            </a>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
+            ) : (
+              <div className="p-4 rounded-xl bg-slate-50 border border-dashed border-slate-200 text-center space-y-1.5" id="unbound-school-empty-state">
+                <Building2 className="w-7 h-7 text-slate-400 mx-auto" />
+                <p className="font-bold text-slate-800 text-xs">Profil ini belum memiliki Sekolah Utama.</p>
+                <p className="text-[11px] text-slate-500">
+                  Pilih sekolah dari daftar master di bawah, atau tambahkan sekolah baru terlebih dahulu.
+                </p>
+              </div>
+            )}
 
-              {/* Primary School Selection for Active Profile */}
-              {activeProfile && (
-                <div className="pt-3 border-t border-slate-100 space-y-1.5 text-xs">
-                  <label htmlFor="select-profile-primary-school" className="block text-slate-700 font-bold uppercase tracking-wider text-[11px]">
-                    Sekolah Utama Profil:
-                  </label>
-                  <select
-                    id="select-profile-primary-school"
-                    value={activeProfile.schoolId || ''}
-                    onChange={(e) => {
-                      if (e.target.value !== (activeProfile.schoolId || '')) {
-                        const newSchoolId = e.target.value;
-                        const res = onSaveProfile(
-                          {
-                            ...activeProfile,
-                            schoolId: newSchoolId,
-                          },
-                          false
+            {/* Primary School Selection for Active Profile */}
+            {activeProfile && (
+              <div className="pt-3 border-t border-slate-100 space-y-1.5 text-xs">
+                <label htmlFor="select-profile-primary-school" className="block text-slate-700 font-bold uppercase tracking-wider text-[11px]">
+                  Sekolah Utama Profil:
+                </label>
+                <select
+                  id="select-profile-primary-school"
+                  value={activeProfile.schoolId || ''}
+                  onChange={(e) => {
+                    if (e.target.value !== (activeProfile.schoolId || '')) {
+                      const newSchoolId = e.target.value;
+                      const res = onSaveProfile(
+                        {
+                          ...activeProfile,
+                          schoolId: newSchoolId,
+                        },
+                        false
+                      );
+                      if (res === false) {
+                        setWorkspaceNotice(
+                          'Sekolah utama tidak dapat diubah karena profil ini sudah memiliki administrasi tahunan.'
                         );
-                        if (res === false) {
-                          setWorkspaceNotice(
-                            'Sekolah utama tidak dapat diubah karena profil ini sudah memiliki administrasi tahunan.'
-                          );
-                        }
                       }
-                    }}
-                    className="w-full text-xs px-3 py-2 rounded-xl border border-slate-300 bg-slate-50 hover:bg-white focus:bg-white text-slate-900 font-semibold focus:outline-hidden focus:ring-2 focus:ring-blue-600 transition cursor-pointer"
-                    title="Pilih Sekolah Utama untuk Profil Guru Aktif"
-                  >
-                    <option value="">Pilih Sekolah Utama...</option>
-                    {schools.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name} {s.npsn ? `(NPSN: ${s.npsn})` : ''} {s.id === activeProfile.schoolId ? '✓ Sekolah Utama' : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-[11px] text-slate-500">
-                    1 Profil Guru = 1 Sekolah Utama sebagai acuan penyusunan administrasi pembelajaran, kop surat, dan lembar pengesahan.
-                  </p>
-                </div>
-              )}
-            </div>
+                    }
+                  }}
+                  className="w-full text-xs px-3 py-2 rounded-xl border border-slate-300 bg-slate-50 hover:bg-white focus:bg-white text-slate-900 font-semibold focus:outline-hidden focus:ring-2 focus:ring-blue-600 transition cursor-pointer"
+                  title="Pilih Sekolah Utama untuk Profil Guru Aktif"
+                >
+                  <option value="">Pilih Sekolah Utama...</option>
+                  {schools.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} {s.npsn ? `(NPSN: ${s.npsn})` : ''} {s.id === activeProfile.schoolId ? '✓ Sekolah Utama' : ''}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-slate-500">
+                  1 Profil Guru = 1 Sekolah Utama sebagai acuan penyusunan administrasi pembelajaran, kop surat, dan lembar pengesahan.
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Card: Principal History */}
@@ -772,131 +788,141 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
               <div className="flex items-center gap-2">
                 <History className="w-4 h-4 text-blue-600" />
                 <h5 className="font-bold text-slate-800 text-xs uppercase tracking-wider">
-                  Riwayat Kepala Sekolah ({principalHistories.filter((h) => h.schoolId === activeSchool.id).length})
+                  Riwayat Kepala Sekolah {profileSchool ? `(${principalHistories.filter((h) => h.schoolId === profileSchool.id).length})` : ''}
                 </h5>
               </div>
-              <button
-                type="button"
-                onClick={() => setIsAddingPrincipalHistory(!isAddingPrincipalHistory)}
-                className="text-xs font-semibold text-blue-700 hover:text-blue-800 bg-blue-50 px-2.5 py-1 rounded-lg transition cursor-pointer flex items-center gap-1"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Tambah Riwayat</span>
-              </button>
-            </div>
-
-            {/* Form inline if active */}
-            {isAddingPrincipalHistory && (
-              <form onSubmit={handleAddPrincipalHistorySubmit} className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-3 text-xs">
-                <h6 className="font-bold text-slate-800">Tambah Catatan Kepala Sekolah Baru</h6>
-                <div>
-                  <label className="block text-[11px] font-medium text-slate-700 mb-1">Nama & Gelar</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Contoh: Dra. Hj. Siti Rahmawati, M.Pd."
-                    value={historyForm.name}
-                    onChange={(e) => setHistoryForm({ ...historyForm, name: e.target.value })}
-                    className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-medium text-slate-700 mb-1">NIP</label>
-                  <input
-                    type="text"
-                    placeholder="19680512 199303 2 004"
-                    value={historyForm.nip}
-                    onChange={(e) => setHistoryForm({ ...historyForm, nip: e.target.value })}
-                    className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-medium text-slate-700 mb-1">Mulai Menjabat</label>
-                  <input
-                    type="date"
-                    value={historyForm.startDate}
-                    onChange={(e) => setHistoryForm({ ...historyForm, startDate: e.target.value })}
-                    className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white"
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="chk-is-active"
-                    checked={historyForm.isActive}
-                    onChange={(e) => setHistoryForm({ ...historyForm, isActive: e.target.checked })}
-                    className="rounded text-blue-600 focus:ring-blue-500"
-                  />
-                  <label htmlFor="chk-is-active" className="text-[11px] font-medium text-slate-700 cursor-pointer">
-                    Jadikan Kepala Sekolah Aktif Sekarang
-                  </label>
-                </div>
-                <div className="flex justify-end gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingPrincipalHistory(false)}
-                    className="px-2.5 py-1 rounded-lg text-slate-600 bg-slate-200 hover:bg-slate-300 cursor-pointer"
-                  >
-                    Batal
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-3 py-1 rounded-lg text-white bg-blue-700 hover:bg-blue-800 font-semibold cursor-pointer"
-                  >
-                    Simpan Riwayat
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {/* History List */}
-            <div className="space-y-2">
-              {principalHistories.filter((h) => h.schoolId === activeSchool.id).length === 0 ? (
-                <p className="text-xs text-slate-400 italic py-1">
-                  Belum ada riwayat perubahannya. Data kepala sekolah aktif diambil dari profile utama sekolah.
-                </p>
-              ) : (
-                principalHistories
-                  .filter((h) => h.schoolId === activeSchool.id)
-                  .map((h) => (
-                    <div
-                      key={h.id}
-                      className={`p-2.5 rounded-xl border text-xs flex items-center justify-between gap-2 ${
-                        h.isActive
-                          ? 'bg-emerald-50/70 border-emerald-300 text-slate-900'
-                          : 'bg-slate-50 border-slate-200 text-slate-600'
-                      }`}
-                    >
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-slate-900">{h.name}</span>
-                          {h.isActive ? (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                              ★ Kepala Sekolah Aktif
-                            </span>
-                          ) : (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-200 text-slate-600">
-                              Sebelumnya
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[11px] text-slate-500">NIP: {h.nip || '-'}</div>
-                        {h.startDate && <div className="text-[10px] text-slate-400">Menjabat sejak: {h.startDate}</div>}
-                      </div>
-
-                      {!h.isActive && onSetActivePrincipal && (
-                        <button
-                          type="button"
-                          onClick={() => onSetActivePrincipal(activeSchool.id, h.id)}
-                          className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-white border border-slate-300 hover:border-blue-500 hover:text-blue-700 shadow-xs cursor-pointer transition shrink-0"
-                        >
-                          Pilih Aktif
-                        </button>
-                      )}
-                    </div>
-                  ))
+              {profileSchool && (
+                <button
+                  type="button"
+                  onClick={() => setIsAddingPrincipalHistory(!isAddingPrincipalHistory)}
+                  className="text-xs font-semibold text-blue-700 hover:text-blue-800 bg-blue-50 px-2.5 py-1 rounded-lg transition cursor-pointer flex items-center gap-1"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Tambah Riwayat</span>
+                </button>
               )}
             </div>
+
+            {profileSchool ? (
+              <>
+                {/* Form inline if active */}
+                {isAddingPrincipalHistory && (
+                  <form onSubmit={handleAddPrincipalHistorySubmit} className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-3 text-xs">
+                    <h6 className="font-bold text-slate-800">Tambah Catatan Kepala Sekolah Baru</h6>
+                    <div>
+                      <label className="block text-[11px] font-medium text-slate-700 mb-1">Nama & Gelar</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Contoh: Dra. Hj. Siti Rahmawati, M.Pd."
+                        value={historyForm.name}
+                        onChange={(e) => setHistoryForm({ ...historyForm, name: e.target.value })}
+                        className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-medium text-slate-700 mb-1">NIP</label>
+                      <input
+                        type="text"
+                        placeholder="19680512 199303 2 004"
+                        value={historyForm.nip}
+                        onChange={(e) => setHistoryForm({ ...historyForm, nip: e.target.value })}
+                        className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-medium text-slate-700 mb-1">Mulai Menjabat</label>
+                      <input
+                        type="date"
+                        value={historyForm.startDate}
+                        onChange={(e) => setHistoryForm({ ...historyForm, startDate: e.target.value })}
+                        className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="chk-is-active"
+                        checked={historyForm.isActive}
+                        onChange={(e) => setHistoryForm({ ...historyForm, isActive: e.target.checked })}
+                        className="rounded text-blue-600 focus:ring-blue-500"
+                      />
+                      <label htmlFor="chk-is-active" className="text-[11px] font-medium text-slate-700 cursor-pointer">
+                        Jadikan Kepala Sekolah Aktif Sekarang
+                      </label>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setIsAddingPrincipalHistory(false)}
+                        className="px-2.5 py-1 rounded-lg text-slate-600 bg-slate-200 hover:bg-slate-300 cursor-pointer"
+                      >
+                        Batal
+                      </button>
+                      <button
+                        type="submit"
+                        className="px-3 py-1 rounded-lg text-white bg-blue-700 hover:bg-blue-800 font-semibold cursor-pointer"
+                      >
+                        Simpan Riwayat
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {/* History List */}
+                <div className="space-y-2">
+                  {principalHistories.filter((h) => h.schoolId === profileSchool.id).length === 0 ? (
+                    <p className="text-xs text-slate-400 italic py-1">
+                      Belum ada riwayat perubahannya. Data kepala sekolah aktif diambil dari profile utama sekolah.
+                    </p>
+                  ) : (
+                    principalHistories
+                      .filter((h) => h.schoolId === profileSchool.id)
+                      .map((h) => (
+                        <div
+                          key={h.id}
+                          className={`p-2.5 rounded-xl border text-xs flex items-center justify-between gap-2 ${
+                            h.isActive
+                              ? 'bg-emerald-50/70 border-emerald-300 text-slate-900'
+                              : 'bg-slate-50 border-slate-200 text-slate-600'
+                          }`}
+                        >
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-slate-900">{h.name}</span>
+                              {h.isActive ? (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                  ★ Kepala Sekolah Aktif
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-200 text-slate-600">
+                                  Sebelumnya
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-slate-500">NIP: {h.nip || '-'}</div>
+                            {h.startDate && <div className="text-[10px] text-slate-400">Menjabat sejak: {h.startDate}</div>}
+                          </div>
+
+                          {!h.isActive && onSetActivePrincipal && (
+                            <button
+                              type="button"
+                              onClick={() => onSetActivePrincipal(profileSchool.id, h.id)}
+                              className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-white border border-slate-300 hover:border-blue-500 hover:text-blue-700 shadow-xs cursor-pointer transition shrink-0"
+                            >
+                              Pilih Aktif
+                            </button>
+                          )}
+                        </div>
+                      ))
+                  )}
+                </div>
+              </>
+            ) : (
+              <p className="text-xs text-slate-500 py-1">
+                Pilih Sekolah Utama terlebih dahulu untuk mengelola data Kepala Sekolah.
+              </p>
+            )}
           </div>
 
           {/* Next step CTA */}
