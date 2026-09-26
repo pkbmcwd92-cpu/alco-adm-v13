@@ -73,6 +73,9 @@ jobs:
       - name: Test Merdeka V5 TP Runtime
         run: npx tsx scripts/testMerdekaV5TPRuntime.ts
 
+      - name: Test Profile School Binding V5
+        run: npx tsx scripts/testProfileSchoolBindingV5.ts
+
       - name: Test AI Transport Hardening
         run: npx tsx scripts/testAITransportHardening.ts
 

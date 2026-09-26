@@ -130,7 +130,7 @@ export function App() {
       });
       return;
     }
-    if (!activeProfile.schoolId && !activeSchool?.id) {
+    if (!activeProfile.schoolId) {
       setAppNotice({
         type: 'warning',
         message: 'Pilih atau daftarkan Sekolah Utama terlebih dahulu sebelum membuat Administrasi.',
@@ -305,7 +305,7 @@ export function App() {
       });
       return;
     }
-    const targetSchoolId = activeProfile.schoolId || activeSchool?.id;
+    const targetSchoolId = activeProfile.schoolId;
     if (!targetSchoolId) {
       setAppNotice({
         type: 'error',

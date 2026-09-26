@@ -69,9 +69,9 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
   onNextStep,
 }) => {
   const activeProfile = profiles.find((p) => p.id === activeProfileId) || profiles[0];
+  const profileSchool = schools.find((s) => s.id === activeProfile?.schoolId);
   const activeSchool =
-    propsActiveSchool ||
-    schools.find((s) => s.id === activeProfile?.schoolId) || {
+    profileSchool || {
       id: '',
       name: '',
       npsn: '',
@@ -103,7 +103,7 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
       status: 'PNS',
       defaultSubject: 'Bahasa Indonesia',
       defaultLevel: 'SD',
-      schoolId: activeSchool?.id || '',
+      schoolId: '',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -133,19 +133,19 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
           status: 'PNS',
           defaultSubject: 'Bahasa Indonesia',
           defaultLevel: 'SD',
-          schoolId: activeSchool?.id || '',
+          schoolId: '',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         });
       }
     }
-  }, [activeProfile?.id, isEditingProfile, activeSchool?.id, schools]);
+  }, [activeProfile?.id, isEditingProfile, schools]);
 
   useEffect(() => {
     if (!isEditingSchool) {
       setSchoolForm({ ...activeSchool });
     }
-  }, [activeSchool?.id, isEditingSchool]);
+  }, [activeSchool.id, isEditingSchool]);
 
   useEffect(() => {
     if (pendingDeleteId) {
@@ -297,7 +297,7 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
       status: 'PNS',
       defaultSubject: 'Bahasa Indonesia',
       defaultLevel: 'SD',
-      schoolId: activeSchool?.id || '',
+      schoolId: '',
       createdAt: '',
       updatedAt: '',
     };
@@ -315,6 +315,10 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
     e.preventDefault();
     if (!profileForm.name.trim()) {
       alert('Nama guru wajib diisi.');
+      return;
+    }
+    if (!profileForm.schoolId || !profileForm.schoolId.trim()) {
+      alert('Sekolah Utama wajib dipilih.');
       return;
     }
     const isCreate = profileModalMode === 'create' || !profiles.some((p) => p.id === profileForm.id);
@@ -726,9 +730,9 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
                   </label>
                   <select
                     id="select-profile-primary-school"
-                    value={activeProfile.schoolId || activeSchool.id}
+                    value={activeProfile.schoolId || ''}
                     onChange={(e) => {
-                      if (e.target.value && e.target.value !== activeProfile.schoolId) {
+                      if (e.target.value !== (activeProfile.schoolId || '')) {
                         const newSchoolId = e.target.value;
                         const res = onSaveProfile(
                           {
@@ -747,9 +751,10 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
                     className="w-full text-xs px-3 py-2 rounded-xl border border-slate-300 bg-slate-50 hover:bg-white focus:bg-white text-slate-900 font-semibold focus:outline-hidden focus:ring-2 focus:ring-blue-600 transition cursor-pointer"
                     title="Pilih Sekolah Utama untuk Profil Guru Aktif"
                   >
+                    <option value="">Pilih Sekolah Utama...</option>
                     {schools.map((s) => (
                       <option key={s.id} value={s.id}>
-                        {s.name} {s.npsn ? `(NPSN: ${s.npsn})` : ''} {s.id === (activeProfile.schoolId || activeSchool.id) ? '✓ Sekolah Utama' : ''}
+                        {s.name} {s.npsn ? `(NPSN: ${s.npsn})` : ''} {s.id === activeProfile.schoolId ? '✓ Sekolah Utama' : ''}
                       </option>
                     ))}
                   </select>
@@ -1190,18 +1195,26 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
                 <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
                   Sekolah Utama <span className="text-rose-500">*</span>
                 </label>
-                <select
-                  id="select-teacher-school-modal"
-                  value={profileForm.schoolId || activeSchool.id}
-                  onChange={(e) => setProfileForm({ ...profileForm, schoolId: e.target.value })}
-                  className="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-600 bg-white font-medium"
-                >
-                  {schools.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} {s.npsn ? `(NPSN: ${s.npsn})` : ''}
-                    </option>
-                  ))}
-                </select>
+                {schools.length === 0 ? (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-xs font-medium">
+                    Belum ada sekolah. Tambahkan sekolah terlebih dahulu sebelum menyimpan profil.
+                  </div>
+                ) : (
+                  <select
+                    id="select-teacher-school-modal"
+                    value={profileForm.schoolId || ''}
+                    onChange={(e) => setProfileForm({ ...profileForm, schoolId: e.target.value })}
+                    className="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-600 bg-white font-medium"
+                    required
+                  >
+                    <option value="">Pilih Sekolah Utama...</option>
+                    {schools.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} {s.npsn ? `(NPSN: ${s.npsn})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <p className="text-[11px] text-slate-500 mt-1">
                   1 Profil Guru = 1 Sekolah Utama. Lembar pengesahan dan kop dokumen akan mengambil data sekolah ini.
                 </p>
