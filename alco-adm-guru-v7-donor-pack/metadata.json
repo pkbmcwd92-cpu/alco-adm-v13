@@ -1,0 +1,8 @@
+{
+  "name": "Remix alco-adm-v7",
+  "description": "Imported from GitHub: pkbmcwd92-cpu/alco-adm-v6.1",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
