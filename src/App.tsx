@@ -41,6 +41,7 @@ import {
   renameWorkspaceV5,
   saveCPV5,
   saveCPAnalysisV5,
+  saveTPV5,
 } from './services/storageV5';
 import { getRuntimeContextV5 } from './services/runtimeV5';
 import {
@@ -462,7 +463,7 @@ export function App() {
   const activeTP: TPData = runtimeContext.annualData?.tp || {
     id: '',
     academicSettingId: activeYearPlan?.id || '',
-    elements: [],
+    items: [],
     updatedAt: '',
   };
   const activeATP: ATPData = runtimeContext.annualData?.atp || {
@@ -549,7 +550,44 @@ export function App() {
   };
 
   const handleSaveTP = (tp: TPData) => {
-    // TP persistence cutover is deferred
+    const persistedCP = runtimeContext.annualData?.cp;
+    const persistedAnalysis = runtimeContext.annualData?.cpAnalysis;
+
+    if (!activeYearPlan || !persistedCP || !persistedAnalysis) {
+      const missingReason = !activeYearPlan
+        ? 'Tidak ada Tahun Ajaran (YearPlan) aktif untuk menyimpan TP.'
+        : !persistedCP
+        ? 'Capaian Pembelajaran (CP) harus disimpan terlebih dahulu sebelum menyimpan TP.'
+        : 'Analisis CP harus disimpan terlebih dahulu sebelum menyimpan TP.';
+      setAppNotice({
+        type: 'error',
+        message: missingReason,
+      });
+      return;
+    }
+
+    try {
+      const canonicalTP: TPData = {
+        ...tp,
+        id: tp.id && tp.id.trim() ? tp.id : `tp-${activeYearPlan.id}`,
+        academicSettingId: activeYearPlan.id,
+        cpId: persistedCP.id,
+        cpAnalysisId: persistedAnalysis.id,
+        academicYear: activeYearPlan.academicYear,
+        subjectCode: activeYearPlan.subjectCode || activeYearPlan.subject,
+        phase: activeYearPlan.phase || tp.phase,
+        basedOnCpUpdatedAt: tp.basedOnCpUpdatedAt || persistedCP.updatedAt,
+        basedOnAnalysisUpdatedAt: tp.basedOnAnalysisUpdatedAt || persistedAnalysis.updatedAt,
+      };
+
+      saveTPV5(activeYearPlan.id, canonicalTP);
+      refreshV5();
+    } catch (err: any) {
+      setAppNotice({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Gagal menyimpan Tujuan Pembelajaran (TP) ke penyimpanan tahunan.',
+      });
+    }
   };
 
   const handleSaveATP = (atp: ATPData) => {
