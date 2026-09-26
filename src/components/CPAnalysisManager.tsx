@@ -38,6 +38,30 @@ interface CPAnalysisManagerProps {
   onBackToCP: () => void;
 }
 
+export function getInitialCPAnalysisItems(cpAnalysis?: CPAnalysisData | null): CPAnalysisItem[] {
+  if (cpAnalysis?.items && cpAnalysis.items.length > 0) {
+    return cpAnalysis.items;
+  }
+  return [];
+}
+
+export function deriveAnalysisItemsFromCP(cp: CPData): CPAnalysisItem[] {
+  if (!cp.elements || cp.elements.length === 0) {
+    return [];
+  }
+  return cp.elements.map((el, idx) => ({
+    id: `ana-item-${Date.now()}-${idx + 1}`,
+    elementId: el.id,
+    elementName: el.name,
+    cpText: el.content,
+    cpCompetence: '',
+    materialScope: el.name,
+    meaningfulUnderstanding: '',
+    suggestedTp: '',
+    order: idx + 1,
+  }));
+}
+
 export const CPAnalysisManager: React.FC<CPAnalysisManagerProps> = ({
   cp,
   cpAnalysis,
@@ -48,40 +72,9 @@ export const CPAnalysisManager: React.FC<CPAnalysisManagerProps> = ({
   onNextStep,
   onBackToCP,
 }) => {
-  // Initialize analysis items from existing or derive from CP elements
-  const initialItems = (): CPAnalysisItem[] => {
-    if (cpAnalysis?.items && cpAnalysis.items.length > 0) {
-      return cpAnalysis.items;
-    }
-    if (cp?.elements && cp.elements.length > 0) {
-      return cp.elements.map((el, idx) => ({
-        id: `ana-item-${Date.now()}-${idx + 1}`,
-        elementName: el.name,
-        cpText: el.content,
-        cpCompetence: 'Mempraktikkan, memahami, menerapkan, mengevaluasi',
-        materialScope: el.name,
-        meaningfulUnderstanding: `Peserta didik mampu menerapkan esensi ${el.name} dalam kehidupan sehari-hari.`,
-        suggestedTp: `Peserta didik dapat menguasai keterampilan dasar pada elemen ${el.name}.`,
-        order: idx + 1,
-      }));
-    }
-    return [
-      {
-        id: `ana-item-default-1`,
-        elementName: 'Elemen Utama',
-        cpText: cp.generalDescription || 'Capaian pembelajaran pada fase ini.',
-        cpCompetence: 'Memahami, mengidentifikasi, mempraktikkan',
-        materialScope: academicSetting.subject || 'Materi Pokok',
-        meaningfulUnderstanding: 'Peserta didik memahami konsep kunci secara kontekstual.',
-        suggestedTp: 'Peserta didik mampu menguraikan konsep utama dengan benar.',
-        order: 1,
-      },
-    ];
-  };
-
-  const [items, setItems] = useState<CPAnalysisItem[]>(initialItems());
+  const [items, setItems] = useState<CPAnalysisItem[]>(() => getInitialCPAnalysisItems(cpAnalysis));
   const [generalSummary, setGeneralSummary] = useState(
-    cpAnalysis?.generalSummary || 'Analisis kompetensi dan materi esensial diturunkan langsung dari CP Fase untuk perumusan Tujuan Pembelajaran (TP).'
+    cpAnalysis?.generalSummary || ''
   );
   const [showSavedToast, setShowSavedToast] = useState(false);
 
@@ -89,6 +82,9 @@ export const CPAnalysisManager: React.FC<CPAnalysisManagerProps> = ({
     if (cpAnalysis?.items && cpAnalysis.items.length > 0) {
       setItems(cpAnalysis.items);
       setGeneralSummary(cpAnalysis.generalSummary || '');
+    } else {
+      setItems([]);
+      setGeneralSummary(cpAnalysis?.generalSummary || '');
     }
   }, [cpAnalysis]);
 
@@ -177,16 +173,7 @@ export const CPAnalysisManager: React.FC<CPAnalysisManagerProps> = ({
       alert('Elemen CP belum tersedia. Silakan isi elemen pada tahap CP terlebih dahulu.');
       return;
     }
-    const derived: CPAnalysisItem[] = cp.elements.map((el, idx) => ({
-      id: `ana-item-${Date.now()}-${idx + 1}`,
-      elementName: el.name,
-      cpText: el.content,
-      cpCompetence: 'Memahami, menerapkan, menganalisis, menyajikan',
-      materialScope: el.name,
-      meaningfulUnderstanding: `Pemahaman kontekstual mengenai konsep inti ${el.name}.`,
-      suggestedTp: `Peserta didik mampu mengaplikasikan keterampilan dan pengetahuan ${el.name} secara terstruktur.`,
-      order: idx + 1,
-    }));
+    const derived: CPAnalysisItem[] = deriveAnalysisItemsFromCP(cp);
     setItems(derived);
     const updated: CPAnalysisData = {
       id: cpAnalysis?.id || `cpanalysis-${academicSetting.id}`,
@@ -200,9 +187,9 @@ export const CPAnalysisManager: React.FC<CPAnalysisManagerProps> = ({
       phase: context.phase,
       generalSummary,
       items: derived,
-      generatedBy: 'AI',
+      generatedBy: 'TEACHER',
       generatedAt: new Date().toISOString(),
-      workflowStatus: 'SIAP',
+      workflowStatus: 'PERLU_DILENGKAPI',
       needsReview: false,
       reviewReason: undefined,
       basedOnCpUpdatedAt: cp.updatedAt || new Date().toISOString(),
@@ -355,7 +342,16 @@ export const CPAnalysisManager: React.FC<CPAnalysisManagerProps> = ({
         </div>
 
         <div className="divide-y divide-slate-200">
-          {items.map((item, idx) => (
+          {items.length === 0 ? (
+            <div className="p-8 text-center text-slate-500 space-y-3">
+              <BookOpen className="w-8 h-8 text-slate-400 mx-auto" />
+              <p className="text-sm font-medium">Belum ada analisis elemen CP.</p>
+              <p className="text-xs text-slate-400 max-w-md mx-auto">
+                Klik tombol &quot;Tarik dari Elemen CP&quot; di atas untuk menyusun draft analisis berdasarkan elemen CP yang tersedia, atau klik &quot;Tambah Baris&quot; untuk input mandiri.
+              </p>
+            </div>
+          ) : (
+            items.map((item, idx) => (
             <div key={item.id} className="p-4 sm:p-5 space-y-3 hover:bg-slate-50/40 transition-colors">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -452,7 +448,7 @@ export const CPAnalysisManager: React.FC<CPAnalysisManagerProps> = ({
                 </div>
               </div>
             </div>
-          ))}
+          )))}
         </div>
       </div>
 

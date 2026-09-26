@@ -64,6 +64,9 @@ jobs:
       - name: Test Merdeka V5 Annual CP Runtime
         run: npx tsx scripts/testMerdekaV5AnnualCPRuntime.ts
 
+      - name: Test Merdeka CP Analysis Integrity
+        run: npx tsx scripts/testMerdekaCPAnalysisIntegrity.ts
+
       - name: Test AI Transport Hardening
         run: npx tsx scripts/testAITransportHardening.ts
 
