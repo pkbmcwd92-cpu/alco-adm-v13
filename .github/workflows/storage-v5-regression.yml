@@ -79,6 +79,9 @@ jobs:
       - name: Test Merdeka V5 Semester Navigation
         run: npx tsx scripts/testMerdekaV5SemesterNavigation.ts
 
+      - name: Test Merdeka V5 Academic Calendar Runtime
+        run: npx tsx scripts/testMerdekaV5CalendarRuntime.ts
+
       - name: Test Profile School Binding V5
         run: npx tsx scripts/testProfileSchoolBindingV5.ts
 

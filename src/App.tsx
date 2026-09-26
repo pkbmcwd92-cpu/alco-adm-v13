@@ -20,6 +20,8 @@ import {
   EnrichmentRecord,
   YearPlan,
   SemesterPlan,
+  AcademicCalendar,
+  CalendarDay,
 } from './types';
 import {
   AppStorageStateV5,
@@ -44,6 +46,7 @@ import {
   saveCPAnalysisV5,
   saveTPV5,
   saveATPV5,
+  saveAcademicCalendarV5,
 } from './services/storageV5';
 import { getRuntimeContextV5 } from './services/runtimeV5';
 import {
@@ -696,7 +699,42 @@ export function App() {
   };
 
   // Handlers for Interconnected Administration Modules (Transitional)
-  const handleSaveCalendar = (cal: any, days: any[]) => {};
+  const handleSaveCalendar = (cal: AcademicCalendar, days: CalendarDay[]) => {
+    if (!activeSemesterPlan || !activeYearPlan) {
+      setAppNotice({
+        type: 'error',
+        message: 'Pilih Semester aktif terlebih dahulu sebelum menyimpan kalender.',
+      });
+      return;
+    }
+
+    try {
+      const canonicalCalendar: AcademicCalendar = {
+        ...cal,
+        id: cal.id && cal.id.trim() ? cal.id : `cal-${activeSemesterPlan.id}`,
+        academicSettingId: activeSemesterPlan.id,
+        academicYear: activeYearPlan.academicYear,
+        semester: activeSemesterPlan.semester === 1 ? '1 (Ganjil)' : '2 (Genap)',
+      };
+
+      const canonicalDays = (days || []).map((day) => ({
+        ...day,
+        academicCalendarId: canonicalCalendar.id,
+      }));
+
+      saveAcademicCalendarV5(activeSemesterPlan.id, {
+        calendar: canonicalCalendar,
+        days: canonicalDays,
+      });
+
+      refreshV5();
+    } catch (err: any) {
+      setAppNotice({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Gagal menyimpan Kalender Pendidikan.',
+      });
+    }
+  };
   const handleSaveTimeAllocations = (allocs: any[]) => {};
   const handleSaveStudents = (stdList: any[]) => {};
   const handleSaveAttendance = (session: any, records: any[]) => {};
@@ -961,8 +999,8 @@ export function App() {
               atp={activeATP}
               documents={v5State.documents || []}
               students={[]}
-              calendar={undefined}
-              calendarDays={[]}
+              calendar={runtimeContext.semesterData?.academicCalendar?.calendar}
+              calendarDays={runtimeContext.semesterData?.academicCalendar?.days || []}
               timeAllocations={[]}
               attendanceSessions={[]}
               attendanceRecords={[]}

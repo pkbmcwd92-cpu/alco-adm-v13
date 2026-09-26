@@ -102,6 +102,12 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
   );
 
   // Region & Academic Settings for Auto-Resolution
+  const [searchRegency, setSearchRegency] = useState<string>(
+    calendar?.sourceRegion && school.regency ? school.regency : (school.regency || '')
+  );
+  const [searchProvince, setSearchProvince] = useState<string>(
+    calendar?.sourceRegion || school.province || ''
+  );
   const [selectedProvince, setSelectedProvince] = useState<string>(
     calendar?.sourceRegion || school.province || ''
   );
@@ -118,7 +124,7 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
   const [schoolDaysPerWeek, setSchoolDaysPerWeek] = useState<number | null>(
     calendar?.schoolDaysPerWeek === 5 || calendar?.schoolDaysPerWeek === 6
       ? calendar.schoolDaysPerWeek
-      : 5
+      : null
   );
 
   // Provenance & Authority
@@ -283,98 +289,134 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
   // WORKFLOW ACTION HANDLERS
   // =========================================================================
 
-  // Step 1: AUTO RESOLVE
+  // Step 1: AUTO RESOLVE (SEARCH-FIRST)
   const handleAutoResolve = async (showNotification: boolean = true) => {
-    // 1. Resolve local official static calendar first
-    const res = resolveOfficialCalendar({
-      province: selectedProvince,
-      academicYear,
-      semester: semester || undefined,
-      academicSettingId: academicSetting.id,
-      calendarId: calendar?.id,
-      schoolDaysPerWeek,
-      subjectWeeklyJP: jpPerWeek,
-    });
+    const semNum = semester === '1' || semester?.startsWith('1') ? 1 : semester === '2' || semester?.startsWith('2') ? 2 : null;
+    const prov = searchProvince || selectedProvince || school.province;
+    const regency = searchRegency || school.regency;
 
-    if (res.isResolved && res.calendar) {
-      // Local source resolved: keep existing flow and do not perform online search
+    // Validation guard: academicYear, semester, province required
+    if (!academicYear || !semNum || !prov) {
       setOnlineDiscovery(null);
-      setOnlineSearchError(null);
-      setStartDate(res.calendar.startDate);
-      setEndDate(res.calendar.endDate);
-      setSchoolDaysPerWeek(res.calendar.schoolDaysPerWeek || 5);
-      setSourceType('REGIONAL_EDUCATION_CALENDAR');
-      setSourceName(res.calendar.sourceName || '');
-      setSourceAuthority(res.calendar.sourceAuthority || '');
-      setSourceDocumentNumber(res.calendar.sourceDocumentNumber || '');
-      setSourceUrl(res.calendar.sourceUrl || '');
-      setDays(res.days);
-      setIsOverridden(false);
-      setWorkflowStatus('AUTO_RESOLVED');
-      setResolutionStatus('RESOLVED');
-      setResolutionMessage(res.diagnostic);
-
-      onSaveCalendar(res.calendar, res.days);
-
+      setWorkflowStatus('UNRESOLVED');
+      setResolutionStatus('REGION_REQUIRED');
+      setResolutionMessage('Pilih Wilayah Provinsi dan Semester terlebih dahulu.');
       if (showNotification) {
-        setSaveNotification('Kalender Pendidikan berhasil di-resolusi secara otomatis dari Sumber Resmi Daerah!');
+        setSaveNotification('Pilih Wilayah Provinsi dan Semester terlebih dahulu.');
         setTimeout(() => setSaveNotification(null), 3500);
       }
-    } else {
-      // Local unresolved: keep unresolved workflow
-      setWorkflowStatus('UNRESOLVED');
-      setResolutionStatus(res.resolutionStatus);
-      setResolutionMessage(res.diagnostic);
+      return;
+    }
 
-      const semNum = semester === '1' ? 1 : semester === '2' ? 2 : null;
-      const prov = selectedProvince || school.province;
+    // 1. ONLINE SEARCH FIRST
+    setIsOnlineSearching(true);
+    setOnlineSearchError(null);
 
-      // Online search strictly if and only if UNVERIFIED_SOURCE and province + academicYear + semester are present
-      if (
-        res.resolutionStatus === 'UNVERIFIED_SOURCE' &&
-        academicYear &&
-        semNum &&
-        prov
-      ) {
-        setIsOnlineSearching(true);
-        setOnlineSearchError(null);
-        try {
-          const onlineRes = await resolveCalendarOnline({
-            academicYear,
-            semester: semNum,
-            province: prov,
-            regency: school.regency || undefined,
-          });
+    let onlineSuccess = false;
+    try {
+      const onlineRes = await resolveCalendarOnline({
+        academicYear,
+        semester: semNum,
+        province: prov,
+        regency: regency || undefined,
+      });
 
-          if (onlineRes.status === 'PARTIALLY_RESOLVED' && onlineRes.selectedSource) {
-            setOnlineDiscovery(onlineRes.selectedSource);
-            // CRITICAL POLICY: PARTIAL is strictly READ-ONLY. DO NOT mutate AcademicCalendar, dates, or save!
-            if (showNotification) {
-              setSaveNotification('Sumber resmi ditemukan online — perlu verifikasi');
-              setTimeout(() => setSaveNotification(null), 4000);
-            }
-          } else {
-            setOnlineDiscovery(null);
-            if (showNotification) {
-              setSaveNotification(res.diagnostic);
-              setTimeout(() => setSaveNotification(null), 4000);
-            }
+      if (onlineRes.selectedSource) {
+        onlineSuccess = true;
+        setOnlineDiscovery(onlineRes.selectedSource);
+        setWorkflowStatus('UNRESOLVED');
+
+        if (onlineRes.selectedSource.sourceLevel === 'NATIONAL') {
+          setResolutionMessage('Sumber nasional ditemukan sebagai referensi. Kalender semester daerah belum ditemukan.');
+          if (showNotification) {
+            setSaveNotification('Sumber nasional ditemukan sebagai referensi. Kalender semester daerah belum ditemukan.');
+            setTimeout(() => setSaveNotification(null), 4000);
           }
-        } catch (err: any) {
-          setOnlineSearchError(err?.message || 'Gagal melakukan pencarian kalender online');
-          setOnlineDiscovery(null);
-        } finally {
-          setIsOnlineSearching(false);
+        } else {
+          setResolutionMessage('Sumber resmi ditemukan — tinjau sebelum digunakan.');
+          if (showNotification) {
+            setSaveNotification('Sumber resmi ditemukan online — perlu verifikasi');
+            setTimeout(() => setSaveNotification(null), 4000);
+          }
+        }
+        return;
+      }
+    } catch (err: any) {
+      setOnlineSearchError(err?.message || 'Gagal melakukan pencarian kalender online');
+    } finally {
+      setIsOnlineSearching(false);
+    }
+
+    // 2. VERIFIED LOCAL CACHE FALLBACK (if online search produces no candidate or fails)
+    if (!onlineSuccess) {
+      const res = resolveOfficialCalendar({
+        province: prov,
+        academicYear,
+        semester: semester || undefined,
+        academicSettingId: academicSetting.id,
+        calendarId: calendar?.id,
+        schoolDaysPerWeek: schoolDaysPerWeek || undefined,
+        subjectWeeklyJP: jpPerWeek,
+      });
+
+      if (res.isResolved && res.calendar) {
+        setOnlineDiscovery(null);
+        setOnlineSearchError(null);
+        setStartDate(res.calendar.startDate);
+        setEndDate(res.calendar.endDate);
+        if (res.calendar.schoolDaysPerWeek === 5 || res.calendar.schoolDaysPerWeek === 6) {
+          setSchoolDaysPerWeek(res.calendar.schoolDaysPerWeek);
+        }
+        setSourceType('REGIONAL_EDUCATION_CALENDAR');
+        setSourceName(res.calendar.sourceName || '');
+        setSourceAuthority(res.calendar.sourceAuthority || '');
+        setSourceDocumentNumber(res.calendar.sourceDocumentNumber || '');
+        setSourceUrl(res.calendar.sourceUrl || '');
+        setDays(res.days);
+        setIsOverridden(false);
+        setWorkflowStatus('AUTO_RESOLVED');
+        setResolutionStatus('RESOLVED');
+        setResolutionMessage(res.diagnostic);
+
+        if (showNotification) {
+          setSaveNotification('Kalender Pendidikan berhasil di-resolusi dari Sumber Resmi Daerah (Lokal)!');
+          setTimeout(() => setSaveNotification(null), 3500);
         }
       } else {
-        // For REGION_REQUIRED, ACADEMIC_YEAR_REQUIRED, SEMESTER_REQUIRED: no online search
+        // 3. MANUAL FALLBACK
         setOnlineDiscovery(null);
+        setWorkflowStatus('UNRESOLVED');
+        setResolutionStatus(res.resolutionStatus);
+        setResolutionMessage(res.diagnostic);
         if (showNotification) {
           setSaveNotification(res.diagnostic);
           setTimeout(() => setSaveNotification(null), 4000);
         }
       }
     }
+  };
+
+  const handleApplyOnlineCandidate = (candidate: CalendarSourceCandidate) => {
+    if (!candidate.semesterStartDate || !candidate.semesterEndDate) {
+      alert(
+        'Sumber resmi ditemukan, tetapi batas tanggal semester tidak dapat ditentukan secara terverifikasi. Silakan tinjau dokumen dan lengkapi tanggal secara manual.'
+      );
+      return;
+    }
+
+    setStartDate(candidate.semesterStartDate);
+    setEndDate(candidate.semesterEndDate);
+    setSourceAuthority(candidate.authority);
+    setSourceName(candidate.documentTitle);
+    setSourceDocumentNumber(candidate.documentNumber || '');
+    setSourceUrl(candidate.sourceUrl);
+    setSelectedProvince(candidate.regency || candidate.province || searchProvince);
+    setSourceType('REGIONAL_EDUCATION_CALENDAR');
+    setWorkflowStatus('AUTO_RESOLVED');
+    setResolutionStatus('RESOLVED');
+    setResolutionMessage(`Acuan kalender diambil dari ${candidate.authority} (${candidate.documentTitle})`);
+    setSaveNotification('Tanggal semester diisi dari acuan resmi online — klik "Konfirmasi Kalender" untuk menetapkan.');
+    setTimeout(() => setSaveNotification(null), 4000);
   };
 
   // Step 3: MANUAL OVERRIDE
@@ -872,24 +914,36 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
           </div>
         </div>
 
-        {/* ONLINE DISCOVERY BANNER (PARTIAL SOURCE - READ ONLY) */}
-        {onlineDiscovery && resolutionStatus !== 'RESOLVED' && (
+        {/* ONLINE DISCOVERY BANNER */}
+        {onlineDiscovery && workflowStatus !== 'CONFIRMED' && (
           <div
             id="online-calendar-discovery-card"
             className="mt-4 p-4 bg-amber-50 border border-amber-300 rounded-xl flex items-start gap-3 text-xs text-amber-950"
           >
             <Sparkles className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
             <div className="space-y-1.5 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-bold text-amber-900">
-                  Sumber resmi ditemukan online — perlu verifikasi
-                </span>
-                <span className="px-2 py-0.5 bg-amber-200 text-amber-900 rounded font-semibold text-[10px]">
-                  {onlineDiscovery.sourceLevel}
-                </span>
-                <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded font-mono text-[10px]">
-                  STATUS: {onlineDiscovery.verificationStatus}
-                </span>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-amber-900">
+                    {onlineDiscovery.sourceLevel === 'NATIONAL'
+                      ? 'Sumber nasional ditemukan sebagai referensi. Kalender semester daerah belum ditemukan.'
+                      : 'Sumber resmi ditemukan — tinjau sebelum digunakan'}
+                  </span>
+                  <span className="px-2 py-0.5 bg-amber-200 text-amber-900 rounded font-semibold text-[10px]">
+                    {onlineDiscovery.sourceLevel}
+                  </span>
+                </div>
+                {onlineDiscovery.sourceLevel !== 'NATIONAL' &&
+                  onlineDiscovery.semesterStartDate &&
+                  onlineDiscovery.semesterEndDate && (
+                    <button
+                      type="button"
+                      onClick={() => handleApplyOnlineCandidate(onlineDiscovery)}
+                      className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded text-xs transition-colors cursor-pointer"
+                    >
+                      Gunakan sebagai Acuan
+                    </button>
+                  )}
               </div>
               <div className="text-slate-700 text-[11px] space-y-0.5">
                 <p>
@@ -899,6 +953,17 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
                   <strong>Dokumen:</strong> {onlineDiscovery.documentTitle}
                   {onlineDiscovery.documentNumber ? ` (${onlineDiscovery.documentNumber})` : ''}
                 </p>
+                {onlineDiscovery.semesterStartDate && onlineDiscovery.semesterEndDate ? (
+                  <p>
+                    <strong>Batas Semester:</strong> {onlineDiscovery.semesterStartDate} s/d{' '}
+                    {onlineDiscovery.semesterEndDate}
+                  </p>
+                ) : (
+                  <p className="text-amber-800 italic">
+                    Sumber resmi ditemukan, tetapi batas tanggal semester tidak dapat ditentukan secara terverifikasi.
+                    Silakan tinjau dokumen dan lengkapi tanggal secara manual.
+                  </p>
+                )}
                 <p className="flex items-center gap-1">
                   <strong>Sumber Resmi:</strong>{' '}
                   <a
@@ -1053,36 +1118,34 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
           </div>
 
           <div className="space-y-4">
-            {/* Region & Academic Year Selector */}
+            {/* Region & Academic Year Search Criteria */}
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2.5">
-              <span className="text-xs font-bold text-slate-700 block">Parameter Resolusi Wilayah:</span>
+              <span className="text-xs font-bold text-slate-700 block">Kriteria Pencarian Kalender Wilayah:</span>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[11px] font-medium text-slate-600 mb-0.5">Provinsi Sekolah</label>
+                  <label className="block text-[11px] font-medium text-slate-600 mb-0.5">Kabupaten / Kota</label>
+                  <input
+                    type="text"
+                    value={searchRegency}
+                    placeholder="e.g. Kota Tangerang"
+                    onChange={(e) => setSearchRegency(e.target.value)}
+                    className="w-full text-xs px-2.5 py-1.5 border border-slate-300 rounded bg-white font-medium focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-600 mb-0.5">Provinsi</label>
                   <select
-                    value={selectedProvince}
+                    value={searchProvince}
                     onChange={(e) => {
+                      setSearchProvince(e.target.value);
                       setSelectedProvince(e.target.value);
                     }}
-                    className="w-full text-xs px-2.5 py-1.5 border border-slate-300 rounded bg-white font-medium"
+                    className="w-full text-xs px-2.5 py-1.5 border border-slate-300 rounded bg-white font-medium focus:ring-1 focus:ring-indigo-500 focus:outline-none"
                   >
+                    <option value="">-- Pilih Provinsi --</option>
                     {availableProvinces.map((prov) => (
                       <option key={prov} value={prov}>
                         {prov}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[11px] font-medium text-slate-600 mb-0.5">Tahun Ajaran</label>
-                  <select
-                    value={academicYear}
-                    onChange={(e) => setAcademicYear(e.target.value)}
-                    className="w-full text-xs px-2.5 py-1.5 border border-slate-300 rounded bg-white font-medium"
-                  >
-                    {availableYears.map((yr) => (
-                      <option key={yr} value={yr}>
-                        {yr}
                       </option>
                     ))}
                   </select>
@@ -1093,23 +1156,11 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">
-                  Semester <span className="text-rose-500">*</span>
+                  Tahun Ajaran &amp; Semester <span className="text-rose-500">*</span>
                 </label>
-                <select
-                  value={semester ?? ''}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    const newSem = val === '1' || val === '2' ? val : null;
-                    setSemester(newSem);
-                  }}
-                  className={`w-full text-xs px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white font-medium ${
-                    !semester ? 'border-amber-400 bg-amber-50/40 text-slate-700' : 'border-slate-300'
-                  }`}
-                >
-                  <option value="">-- Pilih Semester --</option>
-                  <option value="1">Semester 1 (Ganjil)</option>
-                  <option value="2">Semester 2 (Genap)</option>
-                </select>
+                <div className="w-full text-xs px-3 py-2 border border-slate-200 bg-slate-50 rounded-lg font-medium text-slate-700">
+                  {academicSetting.academicYear} • Semester {academicSetting.semester || '-'}
+                </div>
               </div>
 
               <div>

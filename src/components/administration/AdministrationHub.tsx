@@ -185,7 +185,7 @@ export const AdministrationHub: React.FC<AdministrationHubProps> = ({
       label: 'Perencanaan Waktu',
       sublabel: 'Kalender & Alokasi JP',
       icon: CalendarDays,
-      badge: `${calendar?.effectiveWeeks || 18} Mg`,
+      badge: calendar?.effectiveWeeks ? `${calendar.effectiveWeeks} Mg` : 'Belum diatur',
     },
     {
       id: 'learning_plan' as AdministrationTab,

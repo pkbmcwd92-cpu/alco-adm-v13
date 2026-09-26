@@ -524,12 +524,12 @@ runTest('17. V3 Storage Sentinel remains byte-identical throughout semester oper
 });
 
 // -----------------------------------------------------------------------------
-// TEST 18: Semester Module Persistence Remains Unactivated
+// TEST 18: Academic Calendar Activated in B.4.1, Other Handlers Remain Unactivated
 // -----------------------------------------------------------------------------
-runTest('18. Semester module persistence handlers in App.tsx remain unactivated (no-op in B.3A)', () => {
+runTest('18. Academic Calendar persistence is activated in B.4.1, remaining B.4 save handlers remain no-op', () => {
   assert.ok(
-    appSource.includes('const handleSaveCalendar = (cal: any, days: any[]) => {};'),
-    'handleSaveCalendar must remain no-op'
+    appSource.includes('saveAcademicCalendarV5(activeSemesterPlan.id,'),
+    'handleSaveCalendar must call saveAcademicCalendarV5 in B.4.1'
   );
   assert.ok(
     appSource.includes('const handleSaveTimeAllocations = (allocs: any[]) => {};'),
