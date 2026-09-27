@@ -408,7 +408,6 @@ console.log('--- STARTING CALENDAR WORKFLOW REFACTOR & EXACT LEGAL SOURCE TESTS 
     const { resolveCalendarOnline } = await import('../src/services/calendarProviderClient');
     const onlineRes = await resolveCalendarOnline({
       academicYear: '2026/2027',
-      semester: 1,
       province: 'Papua Barat',
       regency: 'Kabupaten Fakfak',
     });
@@ -421,7 +420,6 @@ console.log('--- STARTING CALENDAR WORKFLOW REFACTOR & EXACT LEGAL SOURCE TESTS 
 
   assert(onlineFetchPayload !== null, 'Online fetch was called');
   assert(onlineFetchPayload.academicYear === '2026/2027', 'Academic year passed to online provider');
-  assert(onlineFetchPayload.semester === 1, 'Semester passed to online provider');
   assert(onlineFetchPayload.province === 'Papua Barat', 'Province passed to online provider');
   assert(onlineFetchPayload.regency === 'Kabupaten Fakfak', 'Regency passed to online provider');
 
@@ -464,7 +462,6 @@ console.log('--- STARTING CALENDAR WORKFLOW REFACTOR & EXACT LEGAL SOURCE TESTS 
   const { resolveCalendarOnline } = await import('../src/services/calendarProviderClient');
   const onlineRes = await resolveCalendarOnline({
     academicYear: '2026/2027',
-    semester: 1,
     province: 'Sulawesi Barat',
   });
 

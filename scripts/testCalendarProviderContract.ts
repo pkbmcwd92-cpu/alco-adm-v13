@@ -44,7 +44,6 @@ runTest('A. Priority ordering: REGENCY = 1, PROVINCE = 2, NATIONAL = 3', () => {
 runTest('B. Best source selection: Regency candidate wins over Province and National', () => {
   const req: CalendarSearchRequest = {
     academicYear: '2026/2027',
-    semester: 1,
     province: 'Jawa Barat',
     regency: 'Kabupaten Bandung',
   };
@@ -94,7 +93,6 @@ runTest('B. Best source selection: Regency candidate wins over Province and Nati
 runTest('C. Best source selection: Province fallback when matching regency is absent', () => {
   const req: CalendarSearchRequest = {
     academicYear: '2026/2027',
-    semester: 1,
     province: 'Jawa Barat',
     regency: 'Kota Cimahi',
   };
@@ -132,7 +130,6 @@ runTest('C. Best source selection: Province fallback when matching regency is ab
 runTest('D. Best source selection: National fallback when regional candidates are absent', () => {
   const req: CalendarSearchRequest = {
     academicYear: '2026/2027',
-    semester: 1,
     province: 'Papua Barat Daya',
     regency: 'Kabupaten Sorong',
   };
@@ -169,7 +166,6 @@ runTest('D. Best source selection: National fallback when regional candidates ar
 runTest('E. Geographic precision: Wrong regency in same province must not be selected as REGENCY', () => {
   const req: CalendarSearchRequest = {
     academicYear: '2026/2027',
-    semester: 1,
     province: 'Jawa Barat',
     regency: 'Kabupaten Bandung',
   };
@@ -210,7 +206,6 @@ runTest('E. Geographic precision: Wrong regency in same province must not be sel
 runTest('F. Academic year strictness: Candidates with mismatched academic year are discarded', () => {
   const req: CalendarSearchRequest = {
     academicYear: '2026/2027',
-    semester: 1,
     province: 'Jawa Barat',
     regency: 'Kabupaten Bandung',
   };
@@ -237,7 +232,6 @@ runTest('F. Academic year strictness: Candidates with mismatched academic year a
 runTest('G. Verification check: UNVERIFIED candidate is discarded', () => {
   const req: CalendarSearchRequest = {
     academicYear: '2026/2027',
-    semester: 1,
     province: 'Jawa Barat',
     regency: 'Kabupaten Bandung',
   };
@@ -337,7 +331,6 @@ runTest('J. Region normalization: Tolerant matching for Kab, Kota, Prov prefixes
 runTest('K. Regency vs City distinction: Request for Kabupaten Bandung selects Kabupaten, not Kota Bandung', () => {
   const req: CalendarSearchRequest = {
     academicYear: '2026/2027',
-    semester: 1,
     province: 'Jawa Barat',
     regency: 'Kabupaten Bandung',
   };
@@ -388,7 +381,6 @@ runTest('K. Regency vs City distinction: Request for Kabupaten Bandung selects K
 runTest('L. City vs Regency distinction: Request for Kota Bandung selects Kota, not Kabupaten Bandung', () => {
   const req: CalendarSearchRequest = {
     academicYear: '2026/2027',
-    semester: 1,
     province: 'Jawa Barat',
     regency: 'Kota Bandung',
   };
@@ -428,7 +420,6 @@ runTest('L. City vs Regency distinction: Request for Kota Bandung selects Kota, 
 runTest('M. Fail-closed province matching: REGENCY candidate with missing province is rejected and falls back to PROVINCE', () => {
   const req: CalendarSearchRequest = {
     academicYear: '2026/2027',
-    semester: 1,
     province: 'Jawa Barat',
     regency: 'Kabupaten Bandung',
   };

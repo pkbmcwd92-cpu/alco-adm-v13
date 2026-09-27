@@ -1,5 +1,3 @@
-import { SemesterNumber } from '../types';
-
 /**
  * Canonical hierarchy for calendar provenance level.
  * Single canonical vocabulary representing governance scopes.
@@ -22,7 +20,6 @@ export type CalendarVerificationStatus =
  */
 export interface CalendarSearchRequest {
   academicYear: string;
-  semester?: SemesterNumber;
   province?: string;
   regency?: string;
 }

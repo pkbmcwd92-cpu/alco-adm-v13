@@ -29,9 +29,9 @@ async function main() {
   const originalFetch = globalThis.fetch;
 
   // =========================================================================
-  // TEST 1: Client calls /api/calendar/resolve with correct POST payload
+  // TEST 1: Client calls /api/calendar/resolve with correct POST payload (no semester)
   // =========================================================================
-  await runTest('1. Client contract: calls /api/calendar/resolve with academicYear, semester, province, regency', async () => {
+  await runTest('1. Client contract: calls /api/calendar/resolve with academicYear, province, regency (no semester)', async () => {
     let capturedUrl = '';
     let capturedMethod = '';
     let capturedBody: any = null;
@@ -80,7 +80,6 @@ async function main() {
 
     const request: CalendarSearchRequest = {
       academicYear: '2026/2027',
-      semester: 1,
       province: 'Jawa Barat',
       regency: 'Kabupaten Bandung',
     };
@@ -90,9 +89,13 @@ async function main() {
     assert.strictEqual(capturedUrl, '/api/calendar/resolve');
     assert.strictEqual(capturedMethod, 'POST');
     assert.strictEqual(capturedBody.academicYear, '2026/2027');
-    assert.strictEqual(capturedBody.semester, 1);
     assert.strictEqual(capturedBody.province, 'Jawa Barat');
     assert.strictEqual(capturedBody.regency, 'Kabupaten Bandung');
+    assert.strictEqual(
+      Object.prototype.hasOwnProperty.call(capturedBody, 'semester'),
+      false,
+      'semester property must NOT exist in the HTTP request body'
+    );
 
     assert.strictEqual(res.status, 'PARTIALLY_RESOLVED');
     assert.strictEqual(res.resolvedLevel, 'REGENCY');
@@ -116,7 +119,6 @@ async function main() {
 
     const res500 = await resolveCalendarOnline({
       academicYear: '2026/2027',
-      semester: 1,
       province: 'Jawa Barat',
     });
 
@@ -132,7 +134,6 @@ async function main() {
 
     const resNetworkErr = await resolveCalendarOnline({
       academicYear: '2026/2027',
-      semester: 2,
     });
 
     assert.strictEqual(resNetworkErr.status, 'UNRESOLVED');
@@ -144,7 +145,7 @@ async function main() {
   // =========================================================================
   // TEST 3: Client fails closed on invalid client-side arguments without making fetch call
   // =========================================================================
-  await runTest('3. Client validation: Rejects missing academicYear or invalid semester without network call', async () => {
+  await runTest('3. Client validation: Rejects missing academicYear only without network call', async () => {
     let fetchCalled = false;
     globalThis.fetch = (async () => {
       fetchCalled = true;
@@ -154,17 +155,8 @@ async function main() {
     // Empty academicYear
     const resEmptyYear = await resolveCalendarOnline({
       academicYear: '',
-      semester: 1,
     });
     assert.strictEqual(resEmptyYear.status, 'UNRESOLVED');
-    assert.strictEqual(fetchCalled, false);
-
-    // Invalid semester (e.g. 3)
-    const resInvalidSem = await resolveCalendarOnline({
-      academicYear: '2026/2027',
-      semester: 3 as any,
-    });
-    assert.strictEqual(resInvalidSem.status, 'UNRESOLVED');
     assert.strictEqual(fetchCalled, false);
   });
 
@@ -182,7 +174,6 @@ async function main() {
 
     const resMalformed = await resolveCalendarOnline({
       academicYear: '2026/2027',
-      semester: 1,
     });
     assert.strictEqual(resMalformed.status, 'UNRESOLVED');
     assert.deepStrictEqual(resMalformed.candidates, []);
@@ -218,7 +209,6 @@ async function main() {
 
     const resBroken = await resolveCalendarOnline({
       academicYear: '2026/2027',
-      semester: 1,
     });
 
     assert.strictEqual(resBroken.status, 'UNRESOLVED');
@@ -268,7 +258,6 @@ async function main() {
 
     const searchRequest: CalendarSearchRequest = {
       academicYear: '2026/2027',
-      semester: 1,
       province: 'Jawa Barat',
       regency: 'Kabupaten Bandung',
     };
@@ -310,7 +299,6 @@ async function main() {
 
     const searchRequest: CalendarSearchRequest = {
       academicYear: '2026/2027',
-      semester: 1,
       province: 'Daerah Khusus Ibukota Jakarta',
       regency: 'Kota Administrasi Jakarta Pusat',
     };

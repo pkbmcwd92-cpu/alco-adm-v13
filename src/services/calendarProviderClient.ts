@@ -14,13 +14,12 @@ export async function resolveCalendarOnline(
   if (
     !request ||
     typeof request.academicYear !== 'string' ||
-    request.academicYear.trim() === '' ||
-    (request.semester !== 1 && request.semester !== 2)
+    request.academicYear.trim() === ''
   ) {
     return {
       status: 'UNRESOLVED',
       candidates: [],
-      message: 'Parameter permintaan kalender tidak valid (academicYear dan semester 1/2 wajib diisi).',
+      message: 'Parameter permintaan kalender tidak valid (academicYear wajib diisi).',
     };
   }
 
@@ -32,7 +31,6 @@ export async function resolveCalendarOnline(
       },
       body: JSON.stringify({
         academicYear: request.academicYear.trim(),
-        semester: request.semester,
         province: typeof request.province === 'string' && request.province.trim() ? request.province.trim() : undefined,
         regency: typeof request.regency === 'string' && request.regency.trim() ? request.regency.trim() : undefined,
       }),

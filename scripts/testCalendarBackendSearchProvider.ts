@@ -82,7 +82,6 @@ async function main() {
 
     const results = await provider.search({
       academicYear: '2026/2027',
-      semester: 1,
       province: 'Jawa Barat',
       regency: 'Kabupaten Bandung',
     });
@@ -146,7 +145,6 @@ async function main() {
 
     const results = await provider.search({
       academicYear: '2026/2027',
-      semester: 1,
       province: 'Jawa Barat',
       regency: 'Kabupaten Bandung Barat',
     });
@@ -209,7 +207,6 @@ async function main() {
 
     const results = await provider.search({
       academicYear: '2026/2027',
-      semester: 1,
       province: 'Papua Barat Daya',
       regency: 'Kabupaten Tambrauw',
     });
@@ -244,7 +241,7 @@ async function main() {
     const results = parseCalendarSearchResponse(
       rawJson,
       'REGENCY',
-      { academicYear: '2026/2027', semester: 1, province: 'Jawa Barat', regency: 'Kabupaten Bandung' },
+      { academicYear: '2026/2027', province: 'Jawa Barat', regency: 'Kabupaten Bandung' },
       groundedSources
     );
 
@@ -292,7 +289,7 @@ async function main() {
     const results = parseCalendarSearchResponse(
       rawJson,
       'REGENCY',
-      { academicYear: '2026/2027', semester: 1, province: 'Jawa Barat', regency: 'Kabupaten Bandung' },
+      { academicYear: '2026/2027', province: 'Jawa Barat', regency: 'Kabupaten Bandung' },
       groundedSources
     );
 
@@ -319,7 +316,7 @@ async function main() {
     const results = parseCalendarSearchResponse(
       rawJson,
       'REGENCY',
-      { academicYear: '2026/2027', semester: 1, province: 'Jawa Barat', regency: 'Kabupaten Bandung' },
+      { academicYear: '2026/2027', province: 'Jawa Barat', regency: 'Kabupaten Bandung' },
       groundedSources
     );
 
@@ -346,7 +343,7 @@ async function main() {
     const results = parseCalendarSearchResponse(
       rawJson,
       'REGENCY',
-      { academicYear: '2026/2027', semester: 1, province: 'Jawa Barat', regency: 'Kabupaten Bandung' },
+      { academicYear: '2026/2027', province: 'Jawa Barat', regency: 'Kabupaten Bandung' },
       groundedSources
     );
 
@@ -373,7 +370,7 @@ async function main() {
     const results = parseCalendarSearchResponse(
       rawJson,
       'PROVINCE',
-      { academicYear: '2026/2027', semester: 1, province: 'Jawa Barat' },
+      { academicYear: '2026/2027', province: 'Jawa Barat' },
       groundedSources
     );
 
@@ -386,11 +383,11 @@ async function main() {
   // =========================================================================
   await runTest('K. Malformed output: Invalid JSON returns empty array gracefully', () => {
     const malformed1 = 'I found the calendar: [Not valid JSON...';
-    const res1 = parseCalendarSearchResponse(malformed1, 'NATIONAL', { academicYear: '2026/2027', semester: 1 }, []);
+    const res1 = parseCalendarSearchResponse(malformed1, 'NATIONAL', { academicYear: '2026/2027' }, []);
     assert.deepStrictEqual(res1, []);
 
     const malformed2 = '```json\n{ "object": "not array" }\n```';
-    const res2 = parseCalendarSearchResponse(malformed2, 'NATIONAL', { academicYear: '2026/2027', semester: 1 }, []);
+    const res2 = parseCalendarSearchResponse(malformed2, 'NATIONAL', { academicYear: '2026/2027' }, []);
     assert.deepStrictEqual(res2, []);
   });
 
@@ -416,7 +413,7 @@ async function main() {
     const results = parseCalendarSearchResponse(
       rawJson,
       'NATIONAL',
-      { academicYear: '2026/2027', semester: 1 },
+      { academicYear: '2026/2027' },
       groundedSources
     );
 
@@ -476,7 +473,6 @@ async function main() {
 
     const results = await provider.search({
       academicYear: '2026/2027',
-      semester: 1,
       province: 'Banten',
       regency: 'Kota Tangerang',
     });
@@ -530,7 +526,6 @@ async function main() {
 
     const results = await provider.search({
       academicYear: '2026/2027',
-      semester: 1,
       province: 'Banten',
       regency: 'Kota Tangerang',
     });
@@ -582,7 +577,6 @@ async function main() {
 
     const results = await provider.search({
       academicYear: '2026/2027',
-      semester: 1,
       province: 'Banten',
       regency: 'Kota Tangerang',
     });
@@ -634,7 +628,6 @@ async function main() {
 
     const results = await provider.search({
       academicYear: '2026/2027',
-      semester: 1,
       province: 'Banten',
       regency: 'Kota Tangerang',
     });
@@ -687,7 +680,6 @@ async function main() {
 
     const results = await provider.search({
       academicYear: '2026/2027',
-      semester: 1,
       province: 'Jawa Tengah',
       regency: 'Kota Surakarta',
     });
@@ -709,7 +701,6 @@ async function main() {
       const provider = new GroundedCalendarSearchProvider({ apiKey: '' });
       const res = await provider.searchWithDiagnostics({
         academicYear: '2026/2027',
-        semester: 1,
         province: 'Banten',
         regency: 'Kota Tangerang',
       });
@@ -735,7 +726,6 @@ async function main() {
 
     const res = await provider.searchWithDiagnostics({
       academicYear: '2026/2027',
-      semester: 1,
       province: 'Banten',
       regency: 'Kota Tangerang',
     });
@@ -778,7 +768,6 @@ async function main() {
 
     const res = await provider.searchWithDiagnostics({
       academicYear: '2026/2027',
-      semester: 1,
       province: 'Banten',
       regency: 'Kota Tangerang',
     });
@@ -826,7 +815,6 @@ async function main() {
 
     const res = await provider.searchWithDiagnostics({
       academicYear: '2026/2027',
-      semester: 1,
       province: 'Banten',
       regency: 'Kota Tangerang',
     });
@@ -874,7 +862,6 @@ async function main() {
 
     const res = await provider.searchWithDiagnostics({
       academicYear: '2026/2027',
-      semester: 1,
       province: 'Banten',
       regency: 'Kota Tangerang',
     });
@@ -910,7 +897,6 @@ async function main() {
 
     const res = await provider.searchWithDiagnostics({
       academicYear: '2026/2027',
-      semester: 1,
       province: 'Banten',
       regency: 'Kota Tangerang',
     });
@@ -958,7 +944,6 @@ async function main() {
 
     const res = await provider.searchWithDiagnostics({
       academicYear: '2026/2027',
-      semester: 1,
       province: 'Banten',
       regency: 'Kota Tangerang',
     });

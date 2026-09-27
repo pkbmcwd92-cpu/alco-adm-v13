@@ -376,27 +376,18 @@ app.post('/api/schools/resolve-principal', async (req, res) => {
 
 // Grounded Calendar Online Resolution Endpoint
 app.post('/api/calendar/resolve', async (req, res) => {
-  const { academicYear, semester, province, regency } = req.body || {};
+  const { academicYear, province, regency } = req.body || {};
 
   // 1. Validation error -> HTTP 400
   if (!academicYear || typeof academicYear !== 'string' || academicYear.trim() === '') {
     return res.status(400).json({
       success: false,
-      error: 'Tahun ajaran (academicYear) wajib diisi.',
-    });
-  }
-
-  const semNum = Number(semester);
-  if (semNum !== 1 && semNum !== 2) {
-    return res.status(400).json({
-      success: false,
-      error: 'Semester wajib bernilai 1 atau 2.',
+      error: 'Parameter permintaan kalender tidak valid (academicYear wajib diisi).',
     });
   }
 
   const searchRequest: CalendarSearchRequest = {
     academicYear: academicYear.trim(),
-    semester: semNum as 1 | 2,
     province: typeof province === 'string' && province.trim() ? province.trim() : undefined,
     regency: typeof regency === 'string' && regency.trim() ? regency.trim() : undefined,
   };

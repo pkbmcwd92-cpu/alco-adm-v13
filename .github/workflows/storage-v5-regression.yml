@@ -79,6 +79,12 @@ jobs:
       - name: Test Merdeka V5 Semester Navigation
         run: npx tsx scripts/testMerdekaV5SemesterNavigation.ts
 
+      - name: Test Calendar Backend Search Provider
+        run: npx tsx scripts/testCalendarBackendSearchProvider.ts
+
+      - name: Test Calendar Endpoint Contract
+        run: npx tsx scripts/testCalendarEndpointContract.ts
+
       - name: Test Merdeka V5 Academic Calendar Runtime
         run: npx tsx scripts/testMerdekaV5CalendarRuntime.ts
 
