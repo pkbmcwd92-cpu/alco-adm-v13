@@ -6,7 +6,11 @@ import {
   selectBestCalendarSource,
   evaluateCalendarCandidate,
 } from '../src/services/calendarProvider';
-import { GroundedCalendarSearchProvider, GroundedSearchResponse } from '../server/calendarProvider';
+import {
+  GroundedCalendarSearchProvider,
+  GroundedSearchResponse,
+  TrustedCalendarSearchProvider,
+} from '../server/calendarProvider';
 
 console.log('=== RUNNING AUDIT: CALENDAR ENDPOINT & CLIENT CONTRACT ===\n');
 
@@ -317,6 +321,52 @@ async function main() {
     assert.strictEqual(resolution.status, 'UNRESOLVED');
     assert.strictEqual(resolution.selectedSource, undefined);
     assert.deepStrictEqual(resolution.candidates, []);
+  });
+
+  // =========================================================================
+  // TEST 7: Backend contract logic: TrustedCalendarSearchProvider integrates with selectBestCalendarSource
+  // =========================================================================
+  await runTest('7. Backend contract logic: TrustedCalendarSearchProvider integrates with selectBestCalendarSource', async () => {
+    const verifiedUrl = 'https://disdik.tangerangkota.go.id/kaldik-2026';
+    const provider = new TrustedCalendarSearchProvider({
+      discoverCandidateUrls: async () => [verifiedUrl],
+      fetchSourceContent: async (url) => ({
+        ok: true,
+        status: 200,
+        text: 'Kalender Pendidikan Tahun Ajaran 2026/2027 Kota Tangerang Provinsi Banten resmi diterbitkan.',
+        finalUrl: verifiedUrl,
+        contentType: 'text/html',
+        isPdf: false,
+      }),
+      generatePlainContent: async () => ({
+        text: JSON.stringify([
+          {
+            province: 'Banten',
+            regency: 'Kota Tangerang',
+            academicYear: '2026/2027',
+            authority: 'Dinas Pendidikan Kota Tangerang',
+            documentTitle: 'Pedoman Kaldik Kota Tangerang 2026/2027',
+          },
+        ]),
+      }),
+    });
+
+    const searchRequest: CalendarSearchRequest = {
+      academicYear: '2026/2027',
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    };
+
+    const candidates = await provider.search(searchRequest);
+    const selectedSource = selectBestCalendarSource(candidates, searchRequest);
+
+    assert(selectedSource !== null);
+    const status = evaluateCalendarCandidate(selectedSource);
+
+    assert.strictEqual(status, 'PARTIALLY_RESOLVED');
+    assert.strictEqual(selectedSource.sourceLevel, 'REGENCY');
+    assert.strictEqual(selectedSource.verificationStatus, 'PARTIAL');
+    assert.strictEqual(selectedSource.sourceUrl, verifiedUrl);
   });
 
   // Restore fetch

@@ -940,3 +940,5 @@ export class GroundedCalendarSearchProvider implements CalendarDataProvider {
     return result.candidates;
   }
 }
+
+export * from './trustedCalendarProvider';

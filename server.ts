@@ -4,7 +4,10 @@ import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
 import { OfficialEducationDataProvider } from './server/schoolProvider';
-import { GroundedCalendarSearchProvider } from './server/calendarProvider';
+import {
+  GroundedCalendarSearchProvider,
+  TrustedCalendarSearchProvider,
+} from './server/calendarProvider';
 import {
   selectBestCalendarSource,
   evaluateCalendarCandidate,
@@ -393,7 +396,7 @@ app.post('/api/calendar/resolve', async (req, res) => {
   };
 
   try {
-    const provider = new GroundedCalendarSearchProvider();
+    const provider = new TrustedCalendarSearchProvider();
     const searchResult = await provider.searchWithDiagnostics(searchRequest);
     const candidates = searchResult.candidates;
     const diagnostic = searchResult.diagnostic;
