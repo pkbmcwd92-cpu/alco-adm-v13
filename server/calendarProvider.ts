@@ -563,10 +563,32 @@ export function parseCalendarSearchResponseWithCount(
   return { candidates, rawCandidateCount };
 }
 
+export type CalendarProviderFailureKind =
+  | 'TRANSIENT'
+  | 'MODEL_UNAVAILABLE'
+  | 'PERMISSION'
+  | 'INVALID_REQUEST'
+  | 'OTHER';
+
+export type CalendarStageOutcome =
+  | 'FOUND'
+  | 'EMPTY'
+  | 'PROVIDER_FAILURE';
+
+export function classifyProviderError(err: unknown): CalendarProviderFailureKind {
+  const cat = sanitizeErrorCategory(err);
+  if (cat === 'HTTP_429' || cat === 'HTTP_503') return 'TRANSIENT';
+  if (cat === 'MODEL_NOT_FOUND') return 'MODEL_UNAVAILABLE';
+  if (cat === 'HTTP_403') return 'PERMISSION';
+  if (cat === 'HTTP_400') return 'INVALID_REQUEST';
+  return 'OTHER';
+}
+
 export interface GroundedCalendarSearchProviderOptions {
   apiKey?: string;
   generateGroundedContent?: GroundedGenerateFn;
   resolveGroundedUrl?: GroundedUrlResolver;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 /**
@@ -576,11 +598,13 @@ export interface GroundedCalendarSearchProviderOptions {
 export class GroundedCalendarSearchProvider implements CalendarDataProvider {
   private customGenerate?: GroundedGenerateFn;
   private resolveGroundedUrl: GroundedUrlResolver;
+  private sleepFn: (ms: number) => Promise<void>;
   private apiKey?: string;
 
   constructor(options?: GroundedCalendarSearchProviderOptions) {
     this.customGenerate = options?.generateGroundedContent;
     this.resolveGroundedUrl = options?.resolveGroundedUrl || defaultGroundedUrlResolver;
+    this.sleepFn = options?.sleep || ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.apiKey = options?.apiKey || process.env.GEMINI_API_KEY;
   }
 
@@ -598,75 +622,109 @@ export class GroundedCalendarSearchProvider implements CalendarDataProvider {
   private async executeGroundedSearchWithDiagnostics(prompt: string): Promise<{
     response: GroundedSearchResponse | null;
     modelAttempts: CalendarModelAttemptDiagnostic[];
+    stageOutcome: CalendarStageOutcome;
   }> {
     const modelAttempts: CalendarModelAttemptDiagnostic[] = [];
 
     if (this.customGenerate) {
-      try {
-        const res = await this.customGenerate(prompt, 'gemini-3.8-flash');
-        modelAttempts.push({ model: 'gemini-3.8-flash', status: 'SUCCESS' });
-        return { response: res, modelAttempts };
-      } catch (err) {
-        modelAttempts.push({
-          model: 'gemini-3.8-flash',
-          status: 'ERROR',
-          errorCategory: sanitizeErrorCategory(err),
-        });
-        return { response: null, modelAttempts };
+      let attempts = 0;
+      const maxAttempts = 3;
+      while (attempts < maxAttempts) {
+        attempts++;
+        try {
+          const res = await this.customGenerate(prompt, 'gemini-3.8-flash');
+          modelAttempts.push({ model: 'gemini-3.8-flash', status: 'SUCCESS' });
+          return { response: res, modelAttempts, stageOutcome: 'EMPTY' };
+        } catch (err) {
+          const errCat = sanitizeErrorCategory(err);
+          const failureKind = classifyProviderError(err);
+          modelAttempts.push({
+            model: 'gemini-3.8-flash',
+            status: 'ERROR',
+            errorCategory: errCat,
+          });
+
+          if (failureKind === 'TRANSIENT' && attempts < maxAttempts) {
+            const delay = 800 * Math.pow(2, attempts - 1);
+            await this.sleepFn(delay);
+            continue;
+          }
+          break;
+        }
       }
+      return { response: null, modelAttempts, stageOutcome: 'PROVIDER_FAILURE' };
     }
 
     const ai = this.getAIClient();
     if (!ai) {
-      return { response: null, modelAttempts: [] };
+      return { response: null, modelAttempts: [], stageOutcome: 'PROVIDER_FAILURE' };
     }
 
     const modelsToTry = [
+      'gemini-3.5-flash-lite',
       'gemini-3.8-flash',
-      'gemini-2.5-flash',
-      'gemini-3.1-flash-lite',
-      'gemini-flash-latest',
     ];
 
     for (const model of modelsToTry) {
-      try {
-        const response = await ai.models.generateContent({
-          model,
-          contents: prompt,
-          config: {
-            tools: [{ googleSearch: {} }],
-          },
-        });
+      let attempts = 0;
+      const maxAttempts = 3;
+      let shouldTryNextModel = false;
 
-        modelAttempts.push({ model, status: 'SUCCESS' });
+      while (attempts < maxAttempts) {
+        attempts++;
+        try {
+          const response = await ai.models.generateContent({
+            model,
+            contents: prompt,
+            config: {
+              tools: [{ googleSearch: {} }],
+            },
+          });
 
-        return {
-          response: {
-            text: response.text,
-            candidates: response.candidates as GroundedCandidateResponse[],
-          },
-          modelAttempts,
-        };
-      } catch (err: any) {
-        const errCat = sanitizeErrorCategory(err);
-        modelAttempts.push({ model, status: 'ERROR', errorCategory: errCat });
+          modelAttempts.push({ model, status: 'SUCCESS' });
 
-        const msg = (err?.message || String(err)).toLowerCase();
-        if (
-          msg.includes('503') ||
-          msg.includes('429') ||
-          msg.includes('unavailable') ||
-          msg.includes('quota') ||
-          msg.includes('high demand')
-        ) {
-          await new Promise((resolve) => setTimeout(resolve, 300));
-          continue;
+          return {
+            response: {
+              text: response.text,
+              candidates: response.candidates as GroundedCandidateResponse[],
+            },
+            modelAttempts,
+            stageOutcome: 'EMPTY',
+          };
+        } catch (err: any) {
+          const errCat = sanitizeErrorCategory(err);
+          const failureKind = classifyProviderError(err);
+          modelAttempts.push({ model, status: 'ERROR', errorCategory: errCat });
+
+          if (failureKind === 'TRANSIENT' && attempts < maxAttempts) {
+            const delay = 800 * Math.pow(2, attempts - 1);
+            await this.sleepFn(delay);
+            continue;
+          }
+
+          if (failureKind === 'MODEL_UNAVAILABLE') {
+            shouldTryNextModel = true;
+            break;
+          }
+
+          if (failureKind === 'TRANSIENT') {
+            // Exhausted transient retries for this model
+            shouldTryNextModel = true;
+            break;
+          }
+
+          // Systemic errors (HTTP_400, HTTP_403, PERMISSION, INVALID_REQUEST, etc.):
+          // Immediately stop, do NOT try next model, return PROVIDER_FAILURE
+          return { response: null, modelAttempts, stageOutcome: 'PROVIDER_FAILURE' };
         }
+      }
+
+      if (shouldTryNextModel) {
         continue;
       }
     }
 
-    return { response: null, modelAttempts };
+    return { response: null, modelAttempts, stageOutcome: 'PROVIDER_FAILURE' };
   }
 
   private async executeGroundedSearch(prompt: string): Promise<GroundedSearchResponse | null> {
@@ -705,14 +763,29 @@ export class GroundedCalendarSearchProvider implements CalendarDataProvider {
     const stages: CalendarStageDiagnostic[] = [];
     let acceptedCandidates: CalendarSourceCandidate[] = [];
 
-    const runStage = async (level: CalendarSourceLevel) => {
+    const runStage = async (level: CalendarSourceLevel): Promise<CalendarStageOutcome> => {
       const prompt = buildCalendarSearchPrompt(request, level);
-      const { response, modelAttempts } = await this.executeGroundedSearchWithDiagnostics(prompt);
+      const { response, modelAttempts, stageOutcome: initialOutcome } = await this.executeGroundedSearchWithDiagnostics(prompt);
 
-      const responseReceived = Boolean(response);
-      const textPresent = Boolean(response?.text && response.text.trim().length > 0);
+      if (initialOutcome === 'PROVIDER_FAILURE' || !response) {
+        const stageDiag: CalendarStageDiagnostic = {
+          level,
+          modelAttempts,
+          responseReceived: false,
+          textPresent: false,
+          rawCandidateCount: 0,
+          groundingSourceCount: 0,
+          resolvedGroundingCount: 0,
+          acceptedCandidateCount: 0,
+        };
+        stages.push(stageDiag);
+        return 'PROVIDER_FAILURE';
+      }
 
-      const rawSources = response ? extractGroundedWebSources(response) : [];
+      const responseReceived = true;
+      const textPresent = Boolean(response.text && response.text.trim().length > 0);
+
+      const rawSources = extractGroundedWebSources(response);
       const groundingSourceCount = rawSources.length;
 
       const groundedSources = await resolveGroundedWebSources(rawSources, this.resolveGroundedUrl);
@@ -721,7 +794,7 @@ export class GroundedCalendarSearchProvider implements CalendarDataProvider {
         (s.uri && isOfficialCalendarSourceUrl(s.uri))
       ).length;
 
-      const { candidates, rawCandidateCount } = (response && response.text)
+      const { candidates, rawCandidateCount } = response.text
         ? parseCalendarSearchResponseWithCount(response.text, level, request, groundedSources)
         : { candidates: [], rawCandidateCount: 0 };
       const acceptedCandidateCount = candidates.length;
@@ -741,20 +814,30 @@ export class GroundedCalendarSearchProvider implements CalendarDataProvider {
 
       if (candidates.length > 0) {
         acceptedCandidates = candidates;
-        return true;
+        return 'FOUND';
       }
-      return false;
+      return 'EMPTY';
     };
 
     // 1. Stage: REGENCY
     if (request.regency && request.province) {
-      const found = await runStage('REGENCY');
-      if (found) {
+      const outcome = await runStage('REGENCY');
+      if (outcome === 'FOUND') {
         return {
           candidates: acceptedCandidates,
           diagnostic: {
             aiConfigured: isAiConfigured,
             reason: 'SUCCESS',
+            stages,
+          },
+        };
+      }
+      if (outcome === 'PROVIDER_FAILURE') {
+        return {
+          candidates: [],
+          diagnostic: {
+            aiConfigured: isAiConfigured,
+            reason: 'MODEL_FAILURE',
             stages,
           },
         };
@@ -763,8 +846,8 @@ export class GroundedCalendarSearchProvider implements CalendarDataProvider {
 
     // 2. Stage: PROVINCE
     if (request.province) {
-      const found = await runStage('PROVINCE');
-      if (found) {
+      const outcome = await runStage('PROVINCE');
+      if (outcome === 'FOUND') {
         return {
           candidates: acceptedCandidates,
           diagnostic: {
@@ -774,11 +857,21 @@ export class GroundedCalendarSearchProvider implements CalendarDataProvider {
           },
         };
       }
+      if (outcome === 'PROVIDER_FAILURE') {
+        return {
+          candidates: [],
+          diagnostic: {
+            aiConfigured: isAiConfigured,
+            reason: 'MODEL_FAILURE',
+            stages,
+          },
+        };
+      }
     }
 
     // 3. Stage: NATIONAL
-    const foundNat = await runStage('NATIONAL');
-    if (foundNat) {
+    const outcomeNat = await runStage('NATIONAL');
+    if (outcomeNat === 'FOUND') {
       return {
         candidates: acceptedCandidates,
         diagnostic: {
@@ -788,8 +881,18 @@ export class GroundedCalendarSearchProvider implements CalendarDataProvider {
         },
       };
     }
+    if (outcomeNat === 'PROVIDER_FAILURE') {
+      return {
+        candidates: [],
+        diagnostic: {
+          aiConfigured: isAiConfigured,
+          reason: 'MODEL_FAILURE',
+          stages,
+        },
+      };
+    }
 
-    // Evaluate diagnostic reason if no candidates accepted
+    // Evaluate diagnostic reason if no candidates accepted across completed stages
     let reason: CalendarSearchDiagnosticReason = 'NO_OFFICIAL_SOURCE';
 
     const allModelAttemptsFailed =
@@ -806,9 +909,9 @@ export class GroundedCalendarSearchProvider implements CalendarDataProvider {
       reason = 'MODEL_FAILURE';
     } else if (noTextPresentInAnyStage) {
       reason = 'EMPTY_RESPONSE';
-    } else if (totalGroundingSources === 0) {
+    } else if (totalRawCandidates > 0 && totalGroundingSources === 0) {
       reason = 'NO_GROUNDING';
-    } else if (totalResolvedGrounding === 0) {
+    } else if (totalRawCandidates > 0 && totalResolvedGrounding === 0) {
       reason = 'GROUNDING_RESOLUTION_FAILED';
     } else if (totalRawCandidates > 0) {
       reason = 'CANDIDATE_REJECTED';

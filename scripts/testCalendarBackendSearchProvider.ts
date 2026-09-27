@@ -953,6 +953,197 @@ async function main() {
     assert.strictEqual(res.candidates[0].sourceLevel, 'REGENCY');
   });
 
+  // =========================================================================
+  // PROVIDER RESILIENCE REGRESSION TESTS
+  // =========================================================================
+
+  // TEST Y: Provider Resilience A — Failure at REGENCY stops geography fallback immediately
+  await runTest('Y. Provider Resilience A: Real Failure Shape - REGENCY failure stops geography fallback immediately', async () => {
+    let callCount = 0;
+    const errorGenerate = async (): Promise<GroundedSearchResponse> => {
+      callCount++;
+      throw new Error('429 Too Many Requests');
+    };
+
+    const provider = new GroundedCalendarSearchProvider({
+      apiKey: 'test-key',
+      generateGroundedContent: errorGenerate,
+      sleep: async () => {},
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(res.diagnostic.reason, 'MODEL_FAILURE');
+    assert.strictEqual(res.diagnostic.stages.length, 1, 'Must stop at REGENCY stage and not query PROVINCE or NATIONAL');
+    assert.strictEqual(res.diagnostic.stages[0].level, 'REGENCY');
+  });
+
+  // TEST Z: Provider Resilience B — Transient 429 retries same model and succeeds
+  await runTest('Z. Provider Resilience B: Transient 429 retries same model and succeeds without model fallback', async () => {
+    let generateAttempts = 0;
+    const sleptMs: number[] = [];
+
+    const retryGenerate = async (): Promise<GroundedSearchResponse> => {
+      generateAttempts++;
+      if (generateAttempts < 3) {
+        throw new Error('429 Resource Exhausted');
+      }
+      return {
+        text: JSON.stringify([
+          {
+            province: 'Banten',
+            regency: 'Kota Tangerang',
+            academicYear: '2026/2027',
+            authority: 'Dinas Pendidikan Kota Tangerang',
+            documentTitle: 'Kaldik Kota Tangerang',
+            sourceUrl: 'https://www.tangerangkota.go.id/kaldik',
+          },
+        ]),
+        candidates: [
+          {
+            groundingMetadata: {
+              groundingChunks: [{ web: { uri: 'https://www.tangerangkota.go.id/kaldik' } }],
+            },
+          },
+        ],
+      };
+    };
+
+    const provider = new GroundedCalendarSearchProvider({
+      apiKey: 'test-key',
+      generateGroundedContent: retryGenerate,
+      resolveGroundedUrl: async () => 'https://www.tangerangkota.go.id/kaldik',
+      sleep: async (ms) => { sleptMs.push(ms); },
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(res.diagnostic.reason, 'SUCCESS');
+    assert.strictEqual(generateAttempts, 3, 'Primary model must be retried 3 times');
+    assert.deepStrictEqual(sleptMs, [800, 1600], 'Exponential backoff delays must be passed to sleep');
+  });
+
+  // TEST AA: Provider Resilience C — MODEL_NOT_FOUND skips retries and succeeds on fallback model
+  await runTest('AA. Provider Resilience C: MODEL_NOT_FOUND skips retries and succeeds on fallback model', async () => {
+    const modelNotFoundGenerate = async (prompt: string, model: string): Promise<GroundedSearchResponse> => {
+      if (model === 'gemini-3.5-flash-lite') {
+        throw new Error('404 Model Not Found');
+      }
+      return {
+        text: JSON.stringify([
+          {
+            province: 'Banten',
+            regency: 'Kota Tangerang',
+            academicYear: '2026/2027',
+            authority: 'Pemkot Tangerang',
+            documentTitle: 'Kaldik',
+            sourceUrl: 'https://www.tangerangkota.go.id/kaldik',
+          },
+        ]),
+        candidates: [
+          {
+            groundingMetadata: {
+              groundingChunks: [{ web: { uri: 'https://www.tangerangkota.go.id/kaldik' } }],
+            },
+          },
+        ],
+      };
+    };
+
+    const provider = new GroundedCalendarSearchProvider({
+      apiKey: 'test-key',
+      generateGroundedContent: modelNotFoundGenerate,
+      resolveGroundedUrl: async () => 'https://www.tangerangkota.go.id/kaldik',
+      sleep: async () => {},
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(res.diagnostic.reason, 'SUCCESS');
+  });
+
+  // TEST AB: Provider Resilience D — HTTP 403 halts search immediately
+  await runTest('AB. Provider Resilience D: HTTP 403 permission error halts search immediately without retries or geography fallback', async () => {
+    let attempts = 0;
+    const permDeniedGenerate = async (): Promise<GroundedSearchResponse> => {
+      attempts++;
+      throw new Error('403 PERMISSION_DENIED: API key not valid');
+    };
+
+    const provider = new GroundedCalendarSearchProvider({
+      apiKey: 'test-key',
+      generateGroundedContent: permDeniedGenerate,
+      sleep: async () => {},
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(res.diagnostic.reason, 'MODEL_FAILURE');
+    assert.strictEqual(attempts, 1, '403 error must not be retried repeatedly');
+    assert.strictEqual(res.diagnostic.stages.length, 1, 'Must stop geography search immediately');
+  });
+
+  // TEST AC: Provider Resilience E — Valid empty [] at REGENCY falls back to PROVINCE
+  await runTest('AC. Provider Resilience E: Valid empty [] at REGENCY falls back to PROVINCE', async () => {
+    const queriedLevels: string[] = [];
+    const validEmptyGenerate = async (prompt: string): Promise<GroundedSearchResponse> => {
+      if (prompt.includes('Kabupaten/Kota')) queriedLevels.push('REGENCY');
+      else if (prompt.includes('tingkat Provinsi')) queriedLevels.push('PROVINCE');
+      else queriedLevels.push('NATIONAL');
+
+      return { text: '[]' };
+    };
+
+    const provider = new GroundedCalendarSearchProvider({
+      apiKey: 'test-key',
+      generateGroundedContent: validEmptyGenerate,
+      sleep: async () => {},
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.deepStrictEqual(queriedLevels, ['REGENCY', 'PROVINCE', 'NATIONAL']);
+    assert.strictEqual(res.diagnostic.stages.length, 3);
+  });
+
+  // TEST AD: Provider Resilience F — All valid empty [] results yield NO_OFFICIAL_SOURCE
+  await runTest('AD. Provider Resilience F: All valid empty [] results yield NO_OFFICIAL_SOURCE (not NO_GROUNDING or MODEL_FAILURE)', async () => {
+    const provider = new GroundedCalendarSearchProvider({
+      apiKey: 'test-key',
+      generateGroundedContent: async () => ({ text: '[]' }),
+      sleep: async () => {},
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(res.diagnostic.reason, 'NO_OFFICIAL_SOURCE');
+    assert.strictEqual(res.diagnostic.stages.length, 3);
+  });
+
   console.log(`\n========================================`);
   console.log(`ALL BACKEND CALENDAR SEARCH PROVIDER TESTS PASSED (${passedTests}/${totalTests})`);
   console.log(`========================================\n`);

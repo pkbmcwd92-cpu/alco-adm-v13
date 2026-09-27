@@ -409,7 +409,7 @@ app.post('/api/calendar/resolve', async (req, res) => {
         diagnosticMessage = 'Pencarian online memerlukan GEMINI_API_KEY yang terkonfigurasi di server.';
         break;
       case 'MODEL_FAILURE':
-        diagnosticMessage = 'Layanan pencarian kalender tidak berhasil menjalankan model pencarian AI.';
+        diagnosticMessage = 'Layanan AI untuk pencarian kalender sedang tidak tersedia atau mencapai batas penggunaan. Silakan coba kembali.';
         break;
       case 'EMPTY_RESPONSE':
         diagnosticMessage = 'Pencarian berjalan tetapi tidak menghasilkan respons teks dari model pencarian.';
