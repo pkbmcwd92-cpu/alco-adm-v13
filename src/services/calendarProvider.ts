@@ -56,6 +56,47 @@ export interface CalendarSourceCandidate {
 }
 
 /**
+ * Standardized diagnostic reason categories for calendar search observability.
+ */
+export type CalendarSearchDiagnosticReason =
+  | 'SUCCESS'
+  | 'NO_API_KEY'
+  | 'MODEL_FAILURE'
+  | 'EMPTY_RESPONSE'
+  | 'NO_GROUNDING'
+  | 'GROUNDING_RESOLUTION_FAILED'
+  | 'CANDIDATE_REJECTED'
+  | 'NO_OFFICIAL_SOURCE';
+
+export interface CalendarModelAttemptDiagnostic {
+  model: string;
+  status: 'SUCCESS' | 'ERROR';
+  errorCategory?: string;
+}
+
+export interface CalendarStageDiagnostic {
+  level: CalendarSourceLevel;
+  modelAttempts: CalendarModelAttemptDiagnostic[];
+  responseReceived: boolean;
+  textPresent: boolean;
+  rawCandidateCount: number;
+  groundingSourceCount: number;
+  resolvedGroundingCount: number;
+  acceptedCandidateCount: number;
+}
+
+export interface CalendarSearchDiagnostic {
+  aiConfigured: boolean;
+  reason: CalendarSearchDiagnosticReason;
+  stages: CalendarStageDiagnostic[];
+}
+
+export interface CalendarSearchResultWithDiagnostics {
+  candidates: CalendarSourceCandidate[];
+  diagnostic: CalendarSearchDiagnostic;
+}
+
+/**
  * Resolution status representing completeness and reliability of resolved calendar.
  */
 export type CalendarProviderStatus =
@@ -72,6 +113,7 @@ export interface CalendarProviderResolution {
   candidates: CalendarSourceCandidate[];
   resolvedLevel?: CalendarSourceLevel;
   message?: string;
+  diagnostic?: CalendarSearchDiagnostic;
 }
 
 /**
@@ -82,6 +124,10 @@ export interface CalendarDataProvider {
   search(
     request: CalendarSearchRequest
   ): Promise<CalendarSourceCandidate[]>;
+
+  searchWithDiagnostics?(
+    request: CalendarSearchRequest
+  ): Promise<CalendarSearchResultWithDiagnostics>;
 }
 
 /**

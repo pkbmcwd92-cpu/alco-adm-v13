@@ -4,8 +4,28 @@ import {
   CalendarSearchRequest,
   CalendarSourceCandidate,
   CalendarSourceLevel,
+  CalendarSearchDiagnostic,
+  CalendarSearchDiagnosticReason,
+  CalendarStageDiagnostic,
+  CalendarModelAttemptDiagnostic,
+  CalendarSearchResultWithDiagnostics,
   normalizeRegionName,
 } from '../src/services/calendarProvider';
+
+/**
+ * Sanitizes errors to standard diagnostic error category strings without leaking secrets or raw text.
+ */
+export function sanitizeErrorCategory(err: unknown): string {
+  if (!err) return 'UNKNOWN_PROVIDER_ERROR';
+  const msg = (err instanceof Error ? err.message : String(err)).toUpperCase();
+  if (msg.includes('400') || msg.includes('INVALID_ARGUMENT')) return 'HTTP_400';
+  if (msg.includes('403') || msg.includes('PERMISSION_DENIED') || msg.includes('API_KEY')) return 'HTTP_403';
+  if (msg.includes('404') || msg.includes('NOT_FOUND') || msg.includes('NOT FOUND')) return 'MODEL_NOT_FOUND';
+  if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('QUOTA')) return 'HTTP_429';
+  if (msg.includes('503') || msg.includes('UNAVAILABLE') || msg.includes('HIGH DEMAND')) return 'HTTP_503';
+  if (msg.includes('TOOL') || msg.includes('SEARCH')) return 'SEARCH_TOOL_UNAVAILABLE';
+  return 'UNKNOWN_PROVIDER_ERROR';
+}
 
 export interface GroundedWebSource {
   uri: string;
@@ -492,6 +512,45 @@ export function parseCalendarSearchResponse(
   return candidates;
 }
 
+/**
+ * Parses calendar search response and tracks raw candidate item count before filtering.
+ */
+export function parseCalendarSearchResponseWithCount(
+  rawText: string,
+  level: CalendarSourceLevel,
+  request: CalendarSearchRequest,
+  groundedSources: GroundedWebSource[]
+): { candidates: CalendarSourceCandidate[]; rawCandidateCount: number } {
+  if (!rawText || typeof rawText !== 'string') {
+    return { candidates: [], rawCandidateCount: 0 };
+  }
+
+  let text = rawText.trim();
+  if (text.includes('```json')) {
+    text = text.slice(text.indexOf('```json') + 7);
+    if (text.includes('```')) text = text.slice(0, text.indexOf('```'));
+  } else if (text.includes('```')) {
+    text = text.slice(text.indexOf('```') + 3);
+    if (text.includes('```')) text = text.slice(0, text.indexOf('```'));
+  }
+  text = text.trim();
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { candidates: [], rawCandidateCount: 0 };
+  }
+
+  if (!Array.isArray(parsed)) {
+    return { candidates: [], rawCandidateCount: 0 };
+  }
+
+  const rawCandidateCount = parsed.length;
+  const candidates = parseCalendarSearchResponse(rawText, level, request, groundedSources);
+  return { candidates, rawCandidateCount };
+}
+
 export interface GroundedCalendarSearchProviderOptions {
   apiKey?: string;
   generateGroundedContent?: GroundedGenerateFn;
@@ -524,21 +583,35 @@ export class GroundedCalendarSearchProvider implements CalendarDataProvider {
     });
   }
 
-  private async executeGroundedSearch(prompt: string): Promise<GroundedSearchResponse | null> {
+  private async executeGroundedSearchWithDiagnostics(prompt: string): Promise<{
+    response: GroundedSearchResponse | null;
+    modelAttempts: CalendarModelAttemptDiagnostic[];
+  }> {
+    const modelAttempts: CalendarModelAttemptDiagnostic[] = [];
+
     if (this.customGenerate) {
       try {
-        return await this.customGenerate(prompt, 'gemini-2.5-flash');
-      } catch {
-        return null;
+        const res = await this.customGenerate(prompt, 'gemini-3.8-flash');
+        modelAttempts.push({ model: 'gemini-3.8-flash', status: 'SUCCESS' });
+        return { response: res, modelAttempts };
+      } catch (err) {
+        modelAttempts.push({
+          model: 'gemini-3.8-flash',
+          status: 'ERROR',
+          errorCategory: sanitizeErrorCategory(err),
+        });
+        return { response: null, modelAttempts };
       }
     }
 
     const ai = this.getAIClient();
-    if (!ai) return null;
+    if (!ai) {
+      return { response: null, modelAttempts: [] };
+    }
 
     const modelsToTry = [
-      'gemini-2.5-flash',
       'gemini-3.8-flash',
+      'gemini-2.5-flash',
       'gemini-3.1-flash-lite',
       'gemini-flash-latest',
     ];
@@ -553,11 +626,19 @@ export class GroundedCalendarSearchProvider implements CalendarDataProvider {
           },
         });
 
+        modelAttempts.push({ model, status: 'SUCCESS' });
+
         return {
-          text: response.text,
-          candidates: response.candidates as GroundedCandidateResponse[],
+          response: {
+            text: response.text,
+            candidates: response.candidates as GroundedCandidateResponse[],
+          },
+          modelAttempts,
         };
       } catch (err: any) {
+        const errCat = sanitizeErrorCategory(err);
+        modelAttempts.push({ model, status: 'ERROR', errorCategory: errCat });
+
         const msg = (err?.message || String(err)).toLowerCase();
         if (
           msg.includes('503') ||
@@ -569,12 +650,168 @@ export class GroundedCalendarSearchProvider implements CalendarDataProvider {
           await new Promise((resolve) => setTimeout(resolve, 300));
           continue;
         }
-        // If googleSearch is unsupported on a specific model, try next
         continue;
       }
     }
 
-    return null;
+    return { response: null, modelAttempts };
+  }
+
+  private async executeGroundedSearch(prompt: string): Promise<GroundedSearchResponse | null> {
+    const res = await this.executeGroundedSearchWithDiagnostics(prompt);
+    return res.response;
+  }
+
+  /**
+   * Searches for calendar source candidates while recording granular runtime diagnostic metadata across resolution stages.
+   */
+  async searchWithDiagnostics(request: CalendarSearchRequest): Promise<CalendarSearchResultWithDiagnostics> {
+    const isAiConfigured = Boolean(this.apiKey || this.customGenerate || process.env.GEMINI_API_KEY);
+
+    if (!isAiConfigured) {
+      return {
+        candidates: [],
+        diagnostic: {
+          aiConfigured: false,
+          reason: 'NO_API_KEY',
+          stages: [],
+        },
+      };
+    }
+
+    if (!request || !request.academicYear) {
+      return {
+        candidates: [],
+        diagnostic: {
+          aiConfigured: isAiConfigured,
+          reason: 'NO_OFFICIAL_SOURCE',
+          stages: [],
+        },
+      };
+    }
+
+    const stages: CalendarStageDiagnostic[] = [];
+    let acceptedCandidates: CalendarSourceCandidate[] = [];
+
+    const runStage = async (level: CalendarSourceLevel) => {
+      const prompt = buildCalendarSearchPrompt(request, level);
+      const { response, modelAttempts } = await this.executeGroundedSearchWithDiagnostics(prompt);
+
+      const responseReceived = Boolean(response);
+      const textPresent = Boolean(response?.text && response.text.trim().length > 0);
+
+      const rawSources = response ? extractGroundedWebSources(response) : [];
+      const groundingSourceCount = rawSources.length;
+
+      const groundedSources = await resolveGroundedWebSources(rawSources, this.resolveGroundedUrl);
+      const resolvedGroundingCount = groundedSources.filter(s =>
+        (s.resolvedUri && isOfficialCalendarSourceUrl(s.resolvedUri)) ||
+        (s.uri && isOfficialCalendarSourceUrl(s.uri))
+      ).length;
+
+      const { candidates, rawCandidateCount } = (response && response.text)
+        ? parseCalendarSearchResponseWithCount(response.text, level, request, groundedSources)
+        : { candidates: [], rawCandidateCount: 0 };
+      const acceptedCandidateCount = candidates.length;
+
+      const stageDiag: CalendarStageDiagnostic = {
+        level,
+        modelAttempts,
+        responseReceived,
+        textPresent,
+        rawCandidateCount,
+        groundingSourceCount,
+        resolvedGroundingCount,
+        acceptedCandidateCount,
+      };
+
+      stages.push(stageDiag);
+
+      if (candidates.length > 0) {
+        acceptedCandidates = candidates;
+        return true;
+      }
+      return false;
+    };
+
+    // 1. Stage: REGENCY
+    if (request.regency && request.province) {
+      const found = await runStage('REGENCY');
+      if (found) {
+        return {
+          candidates: acceptedCandidates,
+          diagnostic: {
+            aiConfigured: isAiConfigured,
+            reason: 'SUCCESS',
+            stages,
+          },
+        };
+      }
+    }
+
+    // 2. Stage: PROVINCE
+    if (request.province) {
+      const found = await runStage('PROVINCE');
+      if (found) {
+        return {
+          candidates: acceptedCandidates,
+          diagnostic: {
+            aiConfigured: isAiConfigured,
+            reason: 'SUCCESS',
+            stages,
+          },
+        };
+      }
+    }
+
+    // 3. Stage: NATIONAL
+    const foundNat = await runStage('NATIONAL');
+    if (foundNat) {
+      return {
+        candidates: acceptedCandidates,
+        diagnostic: {
+          aiConfigured: isAiConfigured,
+          reason: 'SUCCESS',
+          stages,
+        },
+      };
+    }
+
+    // Evaluate diagnostic reason if no candidates accepted
+    let reason: CalendarSearchDiagnosticReason = 'NO_OFFICIAL_SOURCE';
+
+    const allModelAttemptsFailed =
+      stages.length > 0 &&
+      stages.every(s => s.modelAttempts.length > 0 && s.modelAttempts.every(m => m.status === 'ERROR')) &&
+      stages.every(s => !s.responseReceived);
+
+    const noTextPresentInAnyStage = stages.every(s => !s.textPresent);
+    const totalGroundingSources = stages.reduce((acc, s) => acc + s.groundingSourceCount, 0);
+    const totalResolvedGrounding = stages.reduce((acc, s) => acc + s.resolvedGroundingCount, 0);
+    const totalRawCandidates = stages.reduce((acc, s) => acc + s.rawCandidateCount, 0);
+
+    if (allModelAttemptsFailed) {
+      reason = 'MODEL_FAILURE';
+    } else if (noTextPresentInAnyStage) {
+      reason = 'EMPTY_RESPONSE';
+    } else if (totalGroundingSources === 0) {
+      reason = 'NO_GROUNDING';
+    } else if (totalResolvedGrounding === 0) {
+      reason = 'GROUNDING_RESOLUTION_FAILED';
+    } else if (totalRawCandidates > 0) {
+      reason = 'CANDIDATE_REJECTED';
+    } else {
+      reason = 'NO_OFFICIAL_SOURCE';
+    }
+
+    return {
+      candidates: [],
+      diagnostic: {
+        aiConfigured: isAiConfigured,
+        reason,
+        stages,
+      },
+    };
   }
 
   /**
@@ -584,69 +821,7 @@ export class GroundedCalendarSearchProvider implements CalendarDataProvider {
    * 3. NATIONAL (if regional search yielded no candidates)
    */
   async search(request: CalendarSearchRequest): Promise<CalendarSourceCandidate[]> {
-    if (!request || !request.academicYear) {
-      return [];
-    }
-
-    // 1. Stage: REGENCY search
-    if (request.regency && request.province) {
-      const regencyPrompt = buildCalendarSearchPrompt(request, 'REGENCY');
-      const regencyResponse = await this.executeGroundedSearch(regencyPrompt);
-
-      if (regencyResponse && regencyResponse.text) {
-        const rawSources = extractGroundedWebSources(regencyResponse);
-        const groundedSources = await resolveGroundedWebSources(rawSources, this.resolveGroundedUrl);
-        const regencyCandidates = parseCalendarSearchResponse(
-          regencyResponse.text,
-          'REGENCY',
-          request,
-          groundedSources
-        );
-
-        if (regencyCandidates.length > 0) {
-          // Short-circuit: return regency candidate without performing further searches
-          return regencyCandidates;
-        }
-      }
-    }
-
-    // 2. Stage: PROVINCE search
-    if (request.province) {
-      const provincePrompt = buildCalendarSearchPrompt(request, 'PROVINCE');
-      const provinceResponse = await this.executeGroundedSearch(provincePrompt);
-
-      if (provinceResponse && provinceResponse.text) {
-        const rawSources = extractGroundedWebSources(provinceResponse);
-        const groundedSources = await resolveGroundedWebSources(rawSources, this.resolveGroundedUrl);
-        const provinceCandidates = parseCalendarSearchResponse(
-          provinceResponse.text,
-          'PROVINCE',
-          request,
-          groundedSources
-        );
-
-        if (provinceCandidates.length > 0) {
-          // Short-circuit: return province candidate
-          return provinceCandidates;
-        }
-      }
-    }
-
-    // 3. Stage: NATIONAL search
-    const nationalPrompt = buildCalendarSearchPrompt(request, 'NATIONAL');
-    const nationalResponse = await this.executeGroundedSearch(nationalPrompt);
-
-    if (nationalResponse && nationalResponse.text) {
-      const rawSources = extractGroundedWebSources(nationalResponse);
-      const groundedSources = await resolveGroundedWebSources(rawSources, this.resolveGroundedUrl);
-      return parseCalendarSearchResponse(
-        nationalResponse.text,
-        'NATIONAL',
-        request,
-        groundedSources
-      );
-    }
-
-    return [];
+    const result = await this.searchWithDiagnostics(request);
+    return result.candidates;
   }
 }

@@ -695,6 +695,279 @@ async function main() {
     assert.strictEqual(results.length, 0, 'Mismatched hostname candidate must be rejected');
   });
 
+  // =========================================================================
+  // B.4.1D DIAGNOSTIC TESTS
+  // =========================================================================
+
+  // TEST R: Case A — No API key
+  await runTest('R. Diagnostic Case A: No API key returns NO_API_KEY and aiConfigured = false', async () => {
+    // Save original env
+    const originalKey = process.env.GEMINI_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+
+    try {
+      const provider = new GroundedCalendarSearchProvider({ apiKey: '' });
+      const res = await provider.searchWithDiagnostics({
+        academicYear: '2026/2027',
+        semester: 1,
+        province: 'Banten',
+        regency: 'Kota Tangerang',
+      });
+
+      assert.strictEqual(res.diagnostic.aiConfigured, false);
+      assert.strictEqual(res.diagnostic.reason, 'NO_API_KEY');
+      assert.strictEqual(res.candidates.length, 0);
+    } finally {
+      process.env.GEMINI_API_KEY = originalKey;
+    }
+  });
+
+  // TEST S: Case B — Every model errors (MODEL_FAILURE)
+  await runTest('S. Diagnostic Case B: Model error across attempts returns MODEL_FAILURE', async () => {
+    const errorGenerate = async (): Promise<GroundedSearchResponse> => {
+      throw new Error('503 Service Unavailable');
+    };
+
+    const provider = new GroundedCalendarSearchProvider({
+      apiKey: 'test-key',
+      generateGroundedContent: errorGenerate,
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      semester: 1,
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(res.diagnostic.aiConfigured, true);
+    assert.strictEqual(res.diagnostic.reason, 'MODEL_FAILURE');
+    assert.ok(res.diagnostic.stages.length > 0);
+    assert.strictEqual(res.diagnostic.stages[0].modelAttempts[0].status, 'ERROR');
+    assert.strictEqual(res.diagnostic.stages[0].modelAttempts[0].errorCategory, 'HTTP_503');
+  });
+
+  // TEST T: Case C — Model returns text but no grounding
+  await runTest('T. Diagnostic Case C: Response with text but no grounding returns NO_GROUNDING', async () => {
+    const textNoGroundingGenerate = async (): Promise<GroundedSearchResponse> => {
+      return {
+        text: JSON.stringify([
+          {
+            province: 'Banten',
+            regency: 'Kota Tangerang',
+            academicYear: '2026/2027',
+            authority: 'Pemkot Tangerang',
+            documentTitle: 'Kaldik',
+            sourceUrl: 'https://www.tangerangkota.go.id/kaldik',
+          },
+        ]),
+        candidates: [
+          {
+            groundingMetadata: {
+              groundingChunks: [], // Empty grounding
+            },
+          },
+        ],
+      };
+    };
+
+    const provider = new GroundedCalendarSearchProvider({
+      apiKey: 'test-key',
+      generateGroundedContent: textNoGroundingGenerate,
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      semester: 1,
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(res.diagnostic.reason, 'NO_GROUNDING');
+  });
+
+  // TEST U: Case D — Grounding exists but redirect resolver returns null
+  await runTest('U. Diagnostic Case D: Grounding present but redirect unresolvable returns GROUNDING_RESOLUTION_FAILED', async () => {
+    const generate = async (): Promise<GroundedSearchResponse> => {
+      return {
+        text: JSON.stringify([
+          {
+            province: 'Banten',
+            regency: 'Kota Tangerang',
+            academicYear: '2026/2027',
+            authority: 'Pemkot Tangerang',
+            documentTitle: 'Kaldik',
+            sourceUrl: 'https://www.tangerangkota.go.id/kaldik',
+          },
+        ]),
+        candidates: [
+          {
+            groundingMetadata: {
+              groundingChunks: [
+                {
+                  web: {
+                    uri: 'https://vertexaisearch.cloud.google.com/redirect/broken',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      };
+    };
+
+    const nullResolver = async (): Promise<string | null> => null;
+
+    const provider = new GroundedCalendarSearchProvider({
+      apiKey: 'test-key',
+      generateGroundedContent: generate,
+      resolveGroundedUrl: nullResolver,
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      semester: 1,
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(res.diagnostic.reason, 'GROUNDING_RESOLUTION_FAILED');
+  });
+
+  // TEST V: Case E — Official landing exists but candidate is rejected (e.g. wrong year/mismatched host)
+  await runTest('V. Diagnostic Case E: Official landing resolved but candidate rejected returns CANDIDATE_REJECTED', async () => {
+    const generate = async (): Promise<GroundedSearchResponse> => {
+      return {
+        text: JSON.stringify([
+          {
+            province: 'Banten',
+            regency: 'Kota Tangerang',
+            academicYear: '2025/2026', // Old year -> candidate rejected
+            authority: 'Pemkot Tangerang',
+            documentTitle: 'Kaldik 2025',
+            sourceUrl: 'https://www.tangerangkota.go.id/kaldik-2025',
+          },
+        ]),
+        candidates: [
+          {
+            groundingMetadata: {
+              groundingChunks: [
+                {
+                  web: {
+                    uri: 'https://vertexaisearch.cloud.google.com/redirect/ok',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      };
+    };
+
+    const validResolver = async (): Promise<string | null> => 'https://www.tangerangkota.go.id/kaldik-2025';
+
+    const provider = new GroundedCalendarSearchProvider({
+      apiKey: 'test-key',
+      generateGroundedContent: generate,
+      resolveGroundedUrl: validResolver,
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      semester: 1,
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(res.diagnostic.reason, 'CANDIDATE_REJECTED');
+  });
+
+  // TEST W: Case F — Successful search returns empty legitimate result
+  await runTest('W. Diagnostic Case F: Successful search with empty [] candidate result returns NO_OFFICIAL_SOURCE', async () => {
+    const emptyGenerate = async (): Promise<GroundedSearchResponse> => {
+      return {
+        text: '[]',
+        candidates: [
+          {
+            groundingMetadata: {
+              groundingChunks: [
+                {
+                  web: {
+                    uri: 'https://www.tangerangkota.go.id/portal',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      };
+    };
+
+    const provider = new GroundedCalendarSearchProvider({
+      apiKey: 'test-key',
+      generateGroundedContent: emptyGenerate,
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      semester: 1,
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(res.diagnostic.reason, 'NO_OFFICIAL_SOURCE');
+  });
+
+  // TEST X: Case G — Tangerang candidate accepted
+  await runTest('X. Diagnostic Case G: Accepted Tangerang candidate returns SUCCESS', async () => {
+    const successGenerate = async (): Promise<GroundedSearchResponse> => {
+      return {
+        text: JSON.stringify([
+          {
+            province: 'Banten',
+            regency: 'Kota Tangerang',
+            academicYear: '2026/2027',
+            authority: 'Dinas Pendidikan Kota Tangerang',
+            documentTitle: 'Kaldik Kota Tangerang 2026/2027',
+            sourceUrl: 'https://www.tangerangkota.go.id/dokumen/kaldik',
+          },
+        ]),
+        candidates: [
+          {
+            groundingMetadata: {
+              groundingChunks: [
+                {
+                  web: {
+                    uri: 'https://vertexaisearch.cloud.google.com/redirect/tang',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      };
+    };
+
+    const resolver = async (): Promise<string | null> => 'https://www.tangerangkota.go.id/dokumen/kaldik';
+
+    const provider = new GroundedCalendarSearchProvider({
+      apiKey: 'test-key',
+      generateGroundedContent: successGenerate,
+      resolveGroundedUrl: resolver,
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      semester: 1,
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(res.diagnostic.reason, 'SUCCESS');
+    assert.strictEqual(res.candidates.length, 1);
+    assert.strictEqual(res.candidates[0].sourceLevel, 'REGENCY');
+  });
+
   console.log(`\n========================================`);
   console.log(`ALL BACKEND CALENDAR SEARCH PROVIDER TESTS PASSED (${passedTests}/${totalTests})`);
   console.log(`========================================\n`);

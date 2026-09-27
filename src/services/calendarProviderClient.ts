@@ -40,10 +40,14 @@ export async function resolveCalendarOnline(
 
     if (!response.ok) {
       let errorMsg = `HTTP ${response.status}`;
+      let errDiag = undefined;
       try {
         const errJson = await response.json();
         if (errJson && errJson.error) {
           errorMsg = errJson.error;
+        }
+        if (errJson && errJson.resolution && errJson.resolution.diagnostic) {
+          errDiag = errJson.resolution.diagnostic;
         }
       } catch {
         // ignore JSON parse error on non-OK response
@@ -52,6 +56,11 @@ export async function resolveCalendarOnline(
         status: 'UNRESOLVED',
         candidates: [],
         message: `Gagal menghubungi layanan kalender pendidikan: ${errorMsg}`,
+        diagnostic: errDiag || {
+          aiConfigured: true,
+          reason: 'MODEL_FAILURE',
+          stages: [],
+        },
       };
     }
 
@@ -69,6 +78,7 @@ export async function resolveCalendarOnline(
         candidates: Array.isArray(data.resolution.candidates) ? data.resolution.candidates : [],
         resolvedLevel: data.resolution.resolvedLevel,
         message: data.resolution.message,
+        diagnostic: data.resolution.diagnostic,
       };
     }
 
@@ -82,6 +92,11 @@ export async function resolveCalendarOnline(
       status: 'UNRESOLVED',
       candidates: [],
       message: error?.message || 'Gagal menghubungi server untuk resolusi kalender pendidikan.',
+      diagnostic: {
+        aiConfigured: true,
+        reason: 'MODEL_FAILURE',
+        stages: [],
+      },
     };
   }
 }

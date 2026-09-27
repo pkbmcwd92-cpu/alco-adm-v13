@@ -403,9 +403,41 @@ app.post('/api/calendar/resolve', async (req, res) => {
 
   try {
     const provider = new GroundedCalendarSearchProvider();
-    const candidates = await provider.search(searchRequest);
+    const searchResult = await provider.searchWithDiagnostics(searchRequest);
+    const candidates = searchResult.candidates;
+    const diagnostic = searchResult.diagnostic;
 
     const selectedSource = selectBestCalendarSource(candidates, searchRequest);
+
+    let diagnosticMessage = '';
+    switch (diagnostic.reason) {
+      case 'SUCCESS':
+        diagnosticMessage = 'Kalender Pendidikan resmi berhasil ditemukan dan diverifikasi secara online.';
+        break;
+      case 'NO_API_KEY':
+        diagnosticMessage = 'Pencarian online memerlukan GEMINI_API_KEY yang terkonfigurasi di server.';
+        break;
+      case 'MODEL_FAILURE':
+        diagnosticMessage = 'Layanan pencarian kalender tidak berhasil menjalankan model pencarian AI.';
+        break;
+      case 'EMPTY_RESPONSE':
+        diagnosticMessage = 'Pencarian berjalan tetapi tidak menghasilkan respons teks dari model pencarian.';
+        break;
+      case 'NO_GROUNDING':
+        diagnosticMessage = 'Pencarian berjalan tetapi tidak menghasilkan sumber web ter-grounding.';
+        break;
+      case 'GROUNDING_RESOLUTION_FAILED':
+        diagnosticMessage = 'Sumber ditemukan tetapi URL sumber tidak dapat diverifikasi ke domain resmi pemerintah (.go.id).';
+        break;
+      case 'CANDIDATE_REJECTED':
+        diagnosticMessage = 'Kandidat kalender ditemukan tetapi tidak memenuhi syarat verifikasi domain resmi.';
+        break;
+      case 'NO_OFFICIAL_SOURCE':
+        diagnosticMessage = 'Pencarian berhasil, tetapi sumber Kalender Pendidikan resmi belum ditemukan.';
+        break;
+      default:
+        diagnosticMessage = 'Pencarian kalender online belum menghasilkan sumber resmi terverifikasi.';
+    }
 
     if (!selectedSource) {
       return res.json({
@@ -415,6 +447,8 @@ app.post('/api/calendar/resolve', async (req, res) => {
           selectedSource: undefined,
           candidates,
           resolvedLevel: undefined,
+          diagnostic,
+          message: diagnosticMessage,
         },
       });
     }
@@ -428,6 +462,8 @@ app.post('/api/calendar/resolve', async (req, res) => {
         selectedSource,
         candidates,
         resolvedLevel: selectedSource.sourceLevel,
+        diagnostic,
+        message: diagnosticMessage,
       },
     });
   } catch (error: unknown) {
@@ -439,6 +475,12 @@ app.post('/api/calendar/resolve', async (req, res) => {
       resolution: {
         status: 'UNRESOLVED',
         candidates: [],
+        message,
+        diagnostic: {
+          aiConfigured: Boolean(process.env.GEMINI_API_KEY),
+          reason: 'MODEL_FAILURE',
+          stages: [],
+        },
       },
     });
   }

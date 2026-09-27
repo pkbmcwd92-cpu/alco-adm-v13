@@ -30,7 +30,10 @@ import {
   generateAlokasiWaktu,
 } from '../../services/documentEngine';
 import { resolveCalendarOnline } from '../../services/calendarProviderClient';
-import { CalendarSourceCandidate } from '../../services/calendarProvider';
+import {
+  CalendarSourceCandidate,
+  CalendarSearchDiagnostic,
+} from '../../services/calendarProvider';
 import {
   Clock,
   Calendar as CalendarIcon,
@@ -171,6 +174,46 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
   const [onlineDiscovery, setOnlineDiscovery] = useState<CalendarSourceCandidate | null>(null);
   const [isOnlineSearching, setIsOnlineSearching] = useState<boolean>(false);
   const [onlineSearchError, setOnlineSearchError] = useState<string | null>(null);
+  const [onlineDiagnostic, setOnlineDiagnostic] = useState<CalendarSearchDiagnostic | null>(null);
+  const [copiedDiagnostic, setCopiedDiagnostic] = useState<boolean>(false);
+
+  const formatDiagnosticCopyText = (diag: CalendarSearchDiagnostic): string => {
+    const lines: string[] = [];
+    lines.push('=== DIAGNOSTIK PENCARIAN KALENDER ONLINE ===');
+    lines.push(`Reason: ${diag.reason}`);
+    lines.push(`AI Configured: ${diag.aiConfigured ? 'true' : 'false'}`);
+    lines.push(`Wilayah Kriteria: ${searchRegency || '-'}, ${searchProvince || '-'} (${academicYear || '-'} Semester ${semester || '-'})`);
+    lines.push('');
+
+    for (const st of diag.stages) {
+      lines.push(`[Tahap ${st.level}]`);
+      if (st.modelAttempts && st.modelAttempts.length > 0) {
+        const attemptsStr = st.modelAttempts
+          .map(a => `${a.model} (${a.status}${a.errorCategory ? `: ${a.errorCategory}` : ''})`)
+          .join(', ');
+        lines.push(`  Model Attempts: ${attemptsStr}`);
+      } else {
+        lines.push(`  Model Attempts: none`);
+      }
+      lines.push(`  Response Received: ${st.responseReceived ? 'ya' : 'tidak'}`);
+      lines.push(`  Text Present: ${st.textPresent ? 'ya' : 'tidak'}`);
+      lines.push(`  Grounding Sources: ${st.groundingSourceCount}`);
+      lines.push(`  Resolved Grounding: ${st.resolvedGroundingCount}`);
+      lines.push(`  Accepted Candidates: ${st.acceptedCandidateCount}`);
+      lines.push('');
+    }
+
+    return lines.join('\n');
+  };
+
+  const handleCopyDiagnostic = () => {
+    if (!onlineDiagnostic) return;
+    const text = formatDiagnosticCopyText(onlineDiagnostic);
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedDiagnostic(true);
+      setTimeout(() => setCopiedDiagnostic(false), 2500);
+    });
+  };
 
   // Auto-resolve on initialization if calendar is empty or unconfigured
   useEffect(() => {
@@ -319,6 +362,10 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
         regency: regency || undefined,
       });
 
+      if (onlineRes.diagnostic) {
+        setOnlineDiagnostic(onlineRes.diagnostic);
+      }
+
       if (onlineRes.selectedSource) {
         onlineSuccess = true;
         setOnlineDiscovery(onlineRes.selectedSource);
@@ -338,6 +385,8 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
           }
         }
         return;
+      } else {
+        setOnlineSearchError(onlineRes.message || 'Pencarian kalender online belum menemukan sumber resmi terverifikasi.');
       }
     } catch (err: any) {
       setOnlineSearchError(err?.message || 'Gagal melakukan pencarian kalender online');
@@ -986,6 +1035,57 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
           <div className="mt-3 p-3 bg-rose-50 border border-rose-200 rounded-lg flex items-center gap-2 text-xs text-rose-800">
             <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
             <span>{onlineSearchError}</span>
+          </div>
+        )}
+
+        {onlineDiagnostic && (
+          <div className="mt-3 p-3.5 bg-slate-800 text-slate-100 rounded-xl text-xs space-y-2.5 font-mono shadow-xs border border-slate-700">
+            <div className="flex items-center justify-between border-b border-slate-700 pb-2">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-indigo-400 shrink-0" />
+                <span className="font-bold text-indigo-200 font-sans">Diagnostik Pencarian Online</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleCopyDiagnostic}
+                className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded font-sans text-[11px] font-semibold transition-colors"
+              >
+                {copiedDiagnostic ? 'Tersalin!' : 'Salin Diagnostik Kalender'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-[11px]">
+              <div>
+                <span className="text-slate-400 block font-sans">Status / Reason:</span>
+                <span className="font-bold text-amber-300">{onlineDiagnostic.reason}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block font-sans">AI Configured:</span>
+                <span className="font-semibold text-emerald-400">{onlineDiagnostic.aiConfigured ? 'YES' : 'NO'}</span>
+              </div>
+            </div>
+
+            {onlineDiagnostic.stages && onlineDiagnostic.stages.length > 0 && (
+              <div className="space-y-1.5 pt-1 border-t border-slate-700 text-[11px]">
+                <span className="text-slate-400 font-bold font-sans block">Rincian Tahap Pencarian:</span>
+                {onlineDiagnostic.stages.map((st) => (
+                  <div key={st.level} className="p-2 bg-slate-900/80 rounded border border-slate-700/60 font-mono text-[10px] space-y-1">
+                    <div className="flex justify-between font-bold text-slate-200">
+                      <span>[{st.level}]</span>
+                      <span className="text-emerald-400">Accepted: {st.acceptedCandidateCount}</span>
+                    </div>
+                    <div className="text-slate-300">
+                      Response: {st.responseReceived ? 'YES' : 'NO'} | Text: {st.textPresent ? 'YES' : 'NO'} | Grounding: {st.groundingSourceCount} | Resolved: {st.resolvedGroundingCount}
+                    </div>
+                    {st.modelAttempts && st.modelAttempts.length > 0 && (
+                      <div className="text-slate-400 text-[9px] truncate">
+                        Models: {st.modelAttempts.map(a => `${a.model} (${a.status}${a.errorCategory ? `:${a.errorCategory}` : ''})`).join(', ')}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
