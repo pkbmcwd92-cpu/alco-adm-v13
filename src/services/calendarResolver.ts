@@ -17,6 +17,7 @@ import {
   RegionalEducationCalendar,
 } from '../data/calendar';
 import { resolveSemester } from './jpEngine';
+import { CalendarSourceCandidate, CalendarSourceEvent } from './calendarProvider';
 
 export interface CalendarResolutionResult {
   isResolved: boolean;
@@ -590,4 +591,171 @@ export function getAvailableAcademicYears(): string[] {
     years.add(c.academicYear)
   );
   return Array.from(years).sort();
+}
+
+export interface ProjectCandidateEventsParams {
+  candidate: CalendarSourceCandidate;
+  startDate: string;
+  endDate: string;
+  calendarId: string;
+  existingDays?: CalendarDay[];
+  academicYear?: string;
+}
+
+/**
+ * Projects validated official events from an online candidate into CalendarDay entries.
+ * Enforces:
+ * 1. Active semester range boundaries (startDate <= date <= endDate)
+ * 2. Canonical category mapping (HOLIDAY, SEMESTER_BREAK, MID_SEMESTER_BREAK, ASSESSMENT, SCHOOL_EVENT, OTHER)
+ * 3. Provenance tracking with sourceLayer: 'REGIONAL_BASE'
+ * 4. Verified national holiday overlay with sourceLayer: 'NATIONAL_OVERLAY'
+ * 5. Strict manual override priority (SCHOOL_OVERRIDE > REGIONAL_BASE > NATIONAL_OVERLAY)
+ */
+export function projectCandidateEventsToCalendarDays(
+  params: ProjectCandidateEventsParams
+): CalendarDay[] {
+  const { candidate, startDate, endDate, calendarId, existingDays, academicYear } = params;
+  const daysMap = new Map<string, CalendarDay>();
+  const nowIso = new Date().toISOString();
+
+  // 1. Map candidate events from official source
+  for (const ev of candidate.events || []) {
+    const evEnd = ev.endDate && ev.endDate >= ev.startDate ? ev.endDate : ev.startDate;
+    const rangeDates = getDateRangeArray(ev.startDate, evEnd);
+
+    let mappedStatus: CalendarDay['status'] = 'other';
+    let mappedCategory: CalendarDay['category'] = 'OTHER';
+
+    switch (ev.category) {
+      case 'HOLIDAY':
+        mappedStatus = 'holiday';
+        mappedCategory = 'OTHER';
+        break;
+      case 'SEMESTER_BREAK':
+        mappedStatus = 'BREAK';
+        mappedCategory = 'SEMESTER_BREAK';
+        break;
+      case 'MID_SEMESTER_BREAK':
+        mappedStatus = 'BREAK';
+        mappedCategory = 'MID_SEMESTER_BREAK';
+        break;
+      case 'ASSESSMENT':
+        mappedStatus = 'ASSESSMENT';
+        mappedCategory = 'ASSESSMENT';
+        break;
+      case 'SCHOOL_EVENT':
+        mappedStatus = 'SCHOOL_EVENT';
+        mappedCategory = 'SCHOOL_EVENT';
+        break;
+      case 'OTHER':
+      default:
+        mappedStatus = 'other';
+        mappedCategory = 'OTHER';
+        break;
+    }
+
+    const regionalProvenance: CalendarProvenance = {
+      sourceType: 'REGIONAL_EDUCATION_CALENDAR',
+      sourceName: candidate.documentTitle,
+      sourceAuthority: candidate.authority,
+      sourceUrl: candidate.sourceUrl,
+      region: candidate.province || 'Daerah',
+      academicYear: candidate.academicYear,
+      documentNumber: candidate.documentNumber,
+      documentTitle: candidate.documentTitle,
+      publicationDate: candidate.publicationDate,
+      effectiveDate: candidate.effectiveDate,
+      retrievedAt: nowIso,
+    };
+
+    for (const d of rangeDates) {
+      if (d >= startDate && d <= endDate) {
+        daysMap.set(d, {
+          id: `day-reg-${d}`,
+          academicCalendarId: calendarId,
+          date: d,
+          status: mappedStatus,
+          notes: ev.name,
+          sourceType: 'REGIONAL_EDUCATION_CALENDAR',
+          sourceName: candidate.documentTitle,
+          sourceAuthority: candidate.authority,
+          sourceDocumentNumber: candidate.documentNumber || undefined,
+          sourceUrl: candidate.sourceUrl,
+          sourceLayer: 'REGIONAL_BASE',
+          sourceProvenances: [regionalProvenance],
+          category: mappedCategory,
+        });
+      }
+    }
+  }
+
+  // 2. National Holiday Overlay (REGIONAL_BASE > NATIONAL_OVERLAY)
+  const normYear = academicYear || candidate.academicYear;
+  for (const holiday of OFFICIAL_NATIONAL_HOLIDAYS) {
+    if (holiday.date >= startDate && holiday.date <= endDate) {
+      const eventYear = holiday.year || parseInt(holiday.date.slice(0, 4), 10);
+      const natSource = OFFICIAL_NATIONAL_HOLIDAY_SOURCES[eventYear];
+      const isNatSourceVerified =
+        natSource &&
+        natSource.verificationState === 'VERIFIED' &&
+        Boolean(natSource.documentNumber) &&
+        Boolean(natSource.documentTitle) &&
+        Boolean(natSource.sourceUrl) &&
+        Boolean(natSource.verifiedAt);
+
+      if (!isNatSourceVerified) {
+        continue;
+      }
+
+      // If date is not already occupied by REGIONAL_BASE, add national holiday
+      if (!daysMap.has(holiday.date)) {
+        const holidayDocNumber = natSource.documentNumber;
+        const holidayDocTitle = natSource.documentTitle;
+        const holidayAuthority = natSource.authority;
+        const holidayUrl = natSource.sourceUrl;
+
+        const holidayProvenance: CalendarProvenance = {
+          sourceType: 'NATIONAL_HOLIDAY_OVERLAY',
+          sourceName: holidayDocTitle,
+          sourceAuthority: holidayAuthority,
+          sourceUrl: holidayUrl,
+          region: 'Nasional',
+          academicYear: normYear,
+          documentNumber: holidayDocNumber,
+          documentTitle: holidayDocTitle,
+          publicationDate: natSource.publicationDate,
+          effectiveDate: natSource.signedDate || natSource.publicationDate,
+          retrievedAt: nowIso,
+          checksumOrDate: natSource.verifiedAt,
+        };
+
+        daysMap.set(holiday.date, {
+          id: `day-nat-${holiday.date}`,
+          academicCalendarId: calendarId,
+          date: holiday.date,
+          status: holiday.type === 'CUTI_BERSAMA' ? 'BREAK' : 'holiday',
+          notes: holiday.name,
+          sourceType: 'NATIONAL_HOLIDAY_OVERLAY',
+          sourceName: holidayDocNumber,
+          sourceAuthority: holidayAuthority,
+          sourceDocumentNumber: holidayDocNumber,
+          sourceUrl: holidayUrl,
+          sourceLayer: 'NATIONAL_OVERLAY',
+          sourceProvenances: [holidayProvenance],
+          category: holiday.type === 'CUTI_BERSAMA' ? 'CUTI_BERSAMA' : 'NATIONAL_HOLIDAY',
+        });
+      }
+    }
+  }
+
+  // 3. Manual Override Precedence (SCHOOL_OVERRIDE > REGIONAL_BASE > NATIONAL_OVERLAY)
+  if (Array.isArray(existingDays)) {
+    for (const d of existingDays) {
+      if (d.sourceLayer === 'SCHOOL_OVERRIDE' || d.sourceType === 'SCHOOL_OVERRIDE' || d.isOverridden) {
+        daysMap.set(d.date, d);
+      }
+    }
+  }
+
+  return Array.from(daysMap.values()).sort((a, b) => a.date.localeCompare(b.date));
 }

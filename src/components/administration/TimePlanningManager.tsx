@@ -24,6 +24,7 @@ import {
   applyManualCalendarOverride,
   confirmCalendarWorkflow,
   resetCalendarToOfficial,
+  projectCandidateEventsToCalendarDays,
 } from '../../services/calendarResolver';
 import {
   generateKalenderAkademik,
@@ -459,10 +460,10 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
     setSourceName(candidate.documentTitle);
     setSourceDocumentNumber(candidate.documentNumber || '');
     setSourceUrl(candidate.sourceUrl);
-    setWorkflowStatus('AUTO_RESOLVED');
-    setResolutionStatus('RESOLVED');
 
     if (!targetStart || !targetEnd) {
+      setWorkflowStatus('REVIEWED');
+      setResolutionStatus('PARTIALLY_RESOLVED');
       setResolutionMessage(`Sumber resmi ${candidate.authority} ditemukan, tetapi batas tanggal semester tidak dapat ditentukan secara terverifikasi. Silakan lengkapi tanggal secara manual.`);
       setSaveNotification(`Sumber resmi ditemukan — lengkapi tanggal Semester ${activeSem} secara manual di panel Tinjau.`);
       setTimeout(() => setSaveNotification(null), 4000);
@@ -471,8 +472,24 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
 
     setStartDate(targetStart);
     setEndDate(targetEnd);
+
+    // Project structured events from candidate to CalendarDay[] with manual override precedence and national holiday overlay
+    const projectedDays = projectCandidateEventsToCalendarDays({
+      candidate,
+      startDate: targetStart,
+      endDate: targetEnd,
+      calendarId: calendar?.id || `cal-${academicSetting.id}`,
+      existingDays: days,
+      academicYear: academicSetting.academicYear || academicYear || candidate.academicYear,
+    });
+    setDays(projectedDays);
+
+    const isComplete = schoolDaysPerWeek === 5 || schoolDaysPerWeek === 6;
+    setWorkflowStatus('REVIEWED');
+    setResolutionStatus(isComplete ? 'RESOLVED' : 'PARTIALLY_RESOLVED');
+
     setResolutionMessage(`Acuan kalender diambil dari ${candidate.authority} (${candidate.documentTitle}) - Semester ${activeSem}`);
-    setSaveNotification(`Tanggal Semester ${activeSem} diisi dari acuan resmi online — klik "Konfirmasi Kalender" untuk menetapkan.`);
+    setSaveNotification(`Tanggal & agenda Semester ${activeSem} diisi dari acuan resmi online — klik "Konfirmasi Kalender" untuk menetapkan.`);
     setTimeout(() => setSaveNotification(null), 4000);
   };
 

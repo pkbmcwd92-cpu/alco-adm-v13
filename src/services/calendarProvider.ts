@@ -24,6 +24,19 @@ export interface CalendarSearchRequest {
   regency?: string;
 }
 
+export interface CalendarSourceEvent {
+  name: string;
+  startDate: string;
+  endDate?: string;
+  category?:
+    | 'HOLIDAY'
+    | 'SEMESTER_BREAK'
+    | 'MID_SEMESTER_BREAK'
+    | 'ASSESSMENT'
+    | 'SCHOOL_EVENT'
+    | 'OTHER';
+}
+
 /**
  * Data contract for a discovered or referenced calendar source candidate.
  */
@@ -53,6 +66,9 @@ export interface CalendarSourceCandidate {
   // Legacy / fallback semester boundaries
   semesterStartDate?: string;
   semesterEndDate?: string;
+
+  // Extracted structured events / agenda / holidays from verified source
+  events?: CalendarSourceEvent[];
 
   verificationStatus: CalendarVerificationStatus;
 

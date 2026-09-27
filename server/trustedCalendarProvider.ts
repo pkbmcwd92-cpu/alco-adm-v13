@@ -1,9 +1,11 @@
 import { GoogleGenAI } from '@google/genai';
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import {
   CalendarDataProvider,
   CalendarSearchRequest,
   CalendarSourceCandidate,
   CalendarSourceLevel,
+  CalendarSourceEvent,
   CalendarSearchDiagnostic,
   CalendarSearchDiagnosticReason,
   CalendarStageDiagnostic,
@@ -224,6 +226,50 @@ export function extractCleanTextFromHtml(html: string): string {
     .slice(0, 10000);
 }
 
+/**
+ * Extracts plain text from a PDF ArrayBuffer or Uint8Array.
+ * Safety: max chars bounded to maxChars (default 50,000).
+ * Fail-closed: returns '' if extraction fails without crashing.
+ */
+export async function extractTextFromPdfBuffer(
+  buffer: ArrayBuffer | Uint8Array,
+  maxChars: number = 50000
+): Promise<string> {
+  try {
+    const loadingTask = pdfjsLib.getDocument({
+      data: buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer),
+      useSystemFonts: true,
+      disableFontFace: true,
+    });
+    const pdfDoc = await loadingTask.promise;
+    const numPages = pdfDoc.numPages;
+    const textParts: string[] = [];
+    let totalLength = 0;
+
+    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+      const page = await pdfDoc.getPage(pageNum);
+      const content = await page.getTextContent();
+      const pageText = content.items
+        .map((item: any) => (item && 'str' in item ? item.str : ''))
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (pageText) {
+        textParts.push(pageText);
+        totalLength += pageText.length;
+        if (totalLength >= maxChars) {
+          break;
+        }
+      }
+    }
+
+    return textParts.join('\n\n').slice(0, maxChars);
+  } catch {
+    return '';
+  }
+}
+
 export interface FetchedSourceContent {
   ok: boolean;
   status: number;
@@ -237,7 +283,7 @@ export interface FetchedSourceContent {
 export type SourceContentFetcher = (url: string) => Promise<FetchedSourceContent | null>;
 
 /**
- * Default HTTP fetcher with timeout, size bound, redirect follow, and HTTPS .go.id enforcement.
+ * Default HTTP fetcher with timeout, size bound, redirect follow, HTTPS .go.id enforcement, and PDF text extraction.
  */
 export const defaultSourceContentFetcher: SourceContentFetcher = async (url: string): Promise<FetchedSourceContent | null> => {
   if (!isOfficialCalendarSourceUrl(url)) return null;
@@ -270,15 +316,42 @@ export const defaultSourceContentFetcher: SourceContentFetcher = async (url: str
     const isPdf = contentType.includes('application/pdf') || finalUrl.toLowerCase().endsWith('.pdf');
 
     if (isPdf) {
-      return {
-        ok: true,
-        status: res.status,
-        text: '',
-        rawHtml: '',
-        finalUrl,
-        contentType: 'application/pdf',
-        isPdf: true,
-      };
+      try {
+        const arrayBuffer = await res.arrayBuffer();
+        if (arrayBuffer.byteLength > 10 * 1024 * 1024) {
+          // Hard size limit: 10 MB, fail closed to metadata-only partial source
+          return {
+            ok: true,
+            status: res.status,
+            text: '',
+            rawHtml: '',
+            finalUrl,
+            contentType: 'application/pdf',
+            isPdf: true,
+          };
+        }
+
+        const extractedText = await extractTextFromPdfBuffer(arrayBuffer, 50000);
+        return {
+          ok: true,
+          status: res.status,
+          text: extractedText,
+          rawHtml: '',
+          finalUrl,
+          contentType: 'application/pdf',
+          isPdf: true,
+        };
+      } catch {
+        return {
+          ok: true,
+          status: res.status,
+          text: '',
+          rawHtml: '',
+          finalUrl,
+          contentType: 'application/pdf',
+          isPdf: true,
+        };
+      }
     }
 
     const rawText = await res.text();
@@ -523,14 +596,16 @@ Tahun Ajaran: ${request.academicYear}
 
 TEKS DOKUMEN:
 """
-${sourceText.slice(0, 8000)}
+${sourceText.slice(0, 15000)}
 """
 
 ATURAN KETAT:
-1. EKSTRAK HANYA tanggal yang secara eksplisit tertulis dalam teks dokumen di atas.
-2. JANGAN MENGARANG tanggal, nomor SK, atau tautan.
+1. EKSTRAK HANYA tanggal dan informasi yang secara eksplisit tertulis dalam teks dokumen di atas.
+2. JANGAN MENGARANG atau menginferensi tanggal, batas semester, nomor SK, atau agenda/libur yang tidak tertulis.
 3. Jika tanggal semester tidak tertulis di teks dokumen, isi dengan string kosong ("") atau null.
 4. Format tanggal harus YYYY-MM-DD.
+5. Untuk events (agenda/libur/asesmen/jeda semester), ekstrak hanya jika nama dan tanggal mulai ada secara eksplisit di teks dokumen.
+   Kategori yang diizinkan: HOLIDAY, SEMESTER_BREAK, MID_SEMESTER_BREAK, ASSESSMENT, SCHOOL_EVENT, OTHER.
 
 Kembalikan HANYA JSON array dengan satu objek:
 [
@@ -546,7 +621,15 @@ Kembalikan HANYA JSON array dengan satu objek:
     "semester1StartDate": "YYYY-MM-DD",
     "semester1EndDate": "YYYY-MM-DD",
     "semester2StartDate": "YYYY-MM-DD",
-    "semester2EndDate": "YYYY-MM-DD"
+    "semester2EndDate": "YYYY-MM-DD",
+    "events": [
+      {
+        "name": "Libur Semester Ganjil",
+        "startDate": "YYYY-MM-DD",
+        "endDate": "YYYY-MM-DD",
+        "category": "SEMESTER_BREAK"
+      }
+    ]
   }
 ]`;
 }
@@ -770,6 +853,54 @@ Ketentuan:
       const parsed = JSON.parse(text);
       if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'object') {
         const item = parsed[0];
+
+        // Parse and validate structured events from AI against source text
+        const rawEvents = Array.isArray(item.events) ? item.events : [];
+        const validatedEvents: CalendarSourceEvent[] = [];
+
+        const allowedCategories: CalendarSourceEvent['category'][] = [
+          'HOLIDAY',
+          'SEMESTER_BREAK',
+          'MID_SEMESTER_BREAK',
+          'ASSESSMENT',
+          'SCHOOL_EVENT',
+          'OTHER',
+        ];
+
+        for (const ev of rawEvents) {
+          if (!ev || typeof ev !== 'object') continue;
+          const name = typeof ev.name === 'string' ? ev.name.trim() : '';
+          if (!name) continue;
+
+          // Validate startDate against sourceText
+          const validStart = extractValidatedDate(ev.startDate, sourceText);
+          if (!validStart) {
+            // If startDate is not supported by source text, discard the entire event
+            continue;
+          }
+
+          // Validate endDate against sourceText if provided
+          let validEnd: string | undefined = undefined;
+          if (ev.endDate) {
+            validEnd = extractValidatedDate(ev.endDate, sourceText);
+          }
+
+          let category: CalendarSourceEvent['category'] = 'OTHER';
+          if (ev.category && typeof ev.category === 'string') {
+            const upperCat = ev.category.toUpperCase().trim();
+            if (allowedCategories.includes(upperCat as any)) {
+              category = upperCat as CalendarSourceEvent['category'];
+            }
+          }
+
+          validatedEvents.push({
+            name,
+            startDate: validStart,
+            endDate: validEnd,
+            category,
+          });
+        }
+
         return {
           sourceLevel: level,
           province: level === 'NATIONAL' ? undefined : (typeof item.province === 'string' && item.province.trim() ? item.province.trim() : request.province),
@@ -787,6 +918,7 @@ Ketentuan:
           semester2EndDate: extractValidatedDate(item.semester2EndDate, sourceText),
           semesterStartDate: extractValidatedDate(item.semesterStartDate || item.semester1StartDate, sourceText),
           semesterEndDate: extractValidatedDate(item.semesterEndDate || item.semester2EndDate, sourceText),
+          events: validatedEvents.length > 0 ? validatedEvents : undefined,
           verificationStatus: 'PARTIAL',
           retrievedAt: new Date().toISOString(),
         };

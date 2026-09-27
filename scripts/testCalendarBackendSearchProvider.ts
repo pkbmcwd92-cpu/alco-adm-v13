@@ -1,6 +1,7 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
+import { jsPDF } from 'jspdf';
 import {
   GroundedCalendarSearchProvider,
   GroundedSearchResponse,
@@ -15,6 +16,7 @@ import {
   generateOfficialSeedRoots,
   extractOfficialLinksFromHtml,
   isDateSupportedBySource,
+  extractTextFromPdfBuffer,
 } from '../server/calendarProvider';
 import { CalendarSearchRequest } from '../src/services/calendarProvider';
 
@@ -1835,6 +1837,155 @@ async function main() {
     assert.strictEqual(res.candidates[0].semester1EndDate, undefined);
     assert.strictEqual(res.candidates[0].semester2StartDate, undefined);
     assert.strictEqual(res.candidates[0].semester2EndDate, undefined);
+  });
+
+  // TEST AX: PDF text extraction — Fixture PDF text extracts semester boundaries
+  await runTest('AX. PDF text extraction: Official PDF with extracted text successfully extracts semester boundaries', async () => {
+    const pdfUrl = 'https://disdik.tangerangkota.go.id/dokumen/kaldik-2026-2027.pdf';
+
+    // Generate in-memory PDF fixture with jsPDF
+    const doc = new jsPDF();
+    doc.text('Kalender Pendidikan Tahun Pelajaran 2026/2027 Kota Tangerang.', 10, 10);
+    doc.text('Semester Ganjil dimulai 13 Juli 2026 dan berakhir 18 Desember 2026.', 10, 20);
+    const pdfArrayBuffer = doc.output('arraybuffer');
+
+    // Extract text deterministically using extractTextFromPdfBuffer
+    const extractedText = await extractTextFromPdfBuffer(pdfArrayBuffer);
+    assert.ok(extractedText.includes('13 Juli 2026'));
+
+    const provider = new TrustedCalendarSearchProvider({
+      discoverCandidateUrls: async () => [pdfUrl],
+      fetchSourceContent: async (url) => ({
+        ok: true,
+        status: 200,
+        text: extractedText,
+        rawHtml: '',
+        finalUrl: pdfUrl,
+        contentType: 'application/pdf',
+        isPdf: true,
+      }),
+      generatePlainContent: async () => ({
+        text: JSON.stringify([
+          {
+            province: 'Banten',
+            regency: 'Kota Tangerang',
+            academicYear: '2026/2027',
+            authority: 'Dinas Pendidikan Kota Tangerang',
+            documentTitle: 'Kaldik Kota Tangerang 2026/2027',
+            semester1StartDate: '2026-07-13',
+            semester1EndDate: '2026-12-18',
+          },
+        ]),
+      }),
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(res.diagnostic.reason, 'SUCCESS');
+    assert.strictEqual(res.candidates.length, 1);
+    assert.strictEqual(res.candidates[0].semester1StartDate, '2026-07-13');
+    assert.strictEqual(res.candidates[0].semester1EndDate, '2026-12-18');
+  });
+
+  // TEST BA: Event extraction — Verified event in sourceText is extracted into candidate.events
+  await runTest('BA. Event extraction: Event explicitly present in sourceText is extracted and validated', async () => {
+    const verifiedUrl = 'https://disdik.tangerangkota.go.id/kaldik-2026-2027';
+
+    const provider = new TrustedCalendarSearchProvider({
+      discoverCandidateUrls: async () => [verifiedUrl],
+      fetchSourceContent: async (url) => ({
+        ok: true,
+        status: 200,
+        text: 'Kalender Pendidikan Tahun Pelajaran 2026/2027 Kota Tangerang. Libur Semester Ganjil tanggal 21 Desember 2026 sampai 3 Januari 2027.',
+        rawHtml: '',
+        finalUrl: verifiedUrl,
+        contentType: 'text/html',
+        isPdf: false,
+      }),
+      generatePlainContent: async () => ({
+        text: JSON.stringify([
+          {
+            province: 'Banten',
+            regency: 'Kota Tangerang',
+            academicYear: '2026/2027',
+            authority: 'Dinas Pendidikan Kota Tangerang',
+            documentTitle: 'Kaldik Kota Tangerang 2026/2027',
+            events: [
+              {
+                name: 'Libur Semester Ganjil',
+                startDate: '2026-12-21',
+                endDate: '2027-01-03',
+                category: 'SEMESTER_BREAK',
+              },
+            ],
+          },
+        ]),
+      }),
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(res.candidates.length, 1);
+    assert.ok(Array.isArray(res.candidates[0].events));
+    assert.strictEqual(res.candidates[0].events?.length, 1);
+    assert.strictEqual(res.candidates[0].events?.[0].name, 'Libur Semester Ganjil');
+    assert.strictEqual(res.candidates[0].events?.[0].startDate, '2026-12-21');
+    assert.strictEqual(res.candidates[0].events?.[0].endDate, '2027-01-03');
+    assert.strictEqual(res.candidates[0].events?.[0].category, 'SEMESTER_BREAK');
+  });
+
+  // TEST BB: Hallucinated event rejection — Event with dates not in sourceText is discarded
+  await runTest('BB. Hallucinated event rejection: AI event with fabricated dates is discarded', async () => {
+    const verifiedUrl = 'https://disdik.tangerangkota.go.id/kaldik-2026-2027';
+
+    const provider = new TrustedCalendarSearchProvider({
+      discoverCandidateUrls: async () => [verifiedUrl],
+      fetchSourceContent: async (url) => ({
+        ok: true,
+        status: 200,
+        text: 'Kalender Pendidikan Tahun Ajaran 2026/2027 Kota Tangerang.',
+        rawHtml: '',
+        finalUrl: verifiedUrl,
+        contentType: 'text/html',
+        isPdf: false,
+      }),
+      generatePlainContent: async () => ({
+        text: JSON.stringify([
+          {
+            province: 'Banten',
+            regency: 'Kota Tangerang',
+            academicYear: '2026/2027',
+            authority: 'Dinas Pendidikan Kota Tangerang',
+            documentTitle: 'Kaldik Kota Tangerang 2026/2027',
+            events: [
+              {
+                name: 'Libur Semester',
+                startDate: '2026-12-21',
+                endDate: '2027-01-03',
+                category: 'SEMESTER_BREAK',
+              },
+            ],
+          },
+        ]),
+      }),
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(res.candidates.length, 1);
+    assert.strictEqual(res.candidates[0].events, undefined, 'Hallucinated events must be discarded');
   });
 
   console.log(`\n========================================`);

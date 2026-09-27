@@ -12,6 +12,8 @@ import {
 import { getRuntimeContextV5 } from '../src/services/runtimeV5';
 import { AcademicCalendar, CalendarDay } from '../src/types';
 import { mapDiagnosticToSearchStatus } from '../src/components/administration/TimePlanningManager';
+import { projectCandidateEventsToCalendarDays } from '../src/services/calendarResolver';
+import { CalendarSourceCandidate } from '../src/services/calendarProvider';
 
 console.log('=== RUNNING AUDIT: MERDEKA V5 ACADEMIC CALENDAR RUNTIME (B.4.1) ===\n');
 
@@ -574,6 +576,155 @@ runTest('18E. ERROR banner contract strictly rejects aiSearchStatus === ERROR ||
   assert.ok(
     tpmSource.includes("!isOnlineSearching && aiSearchStatus === 'ERROR' && ("),
     'Error banner must depend strictly on aiSearchStatus === ERROR'
+  );
+});
+
+// -----------------------------------------------------------------------------
+// TEST AY: Incomplete Source Status (workflowStatus = REVIEWED, resolutionStatus = PARTIALLY_RESOLVED)
+// -----------------------------------------------------------------------------
+runTest('AY. Incomplete source status: Candidate with absent semester boundaries yields REVIEWED + PARTIALLY_RESOLVED', () => {
+  assert.ok(
+    tpmSource.includes("if (!targetStart || !targetEnd) {\n      setWorkflowStatus('REVIEWED');\n      setResolutionStatus('PARTIALLY_RESOLVED');") ||
+      (tpmSource.includes("!targetStart || !targetEnd") &&
+       tpmSource.includes("setWorkflowStatus('REVIEWED')") &&
+       tpmSource.includes("setResolutionStatus('PARTIALLY_RESOLVED')")),
+    'Incomplete candidate boundaries must set REVIEWED and PARTIALLY_RESOLVED'
+  );
+  assert.ok(
+    !tpmSource.includes("setWorkflowStatus('AUTO_RESOLVED');\n    setResolutionStatus('RESOLVED');\n\n    if (!targetStart || !targetEnd)"),
+    'Must not prematurely set AUTO_RESOLVED or RESOLVED before verifying boundaries'
+  );
+});
+
+// -----------------------------------------------------------------------------
+// TEST AZ: Complete Source Status (REVIEWED + PARTIALLY_RESOLVED if no schoolDays, RESOLVED if 5/6, never CONFIRMED)
+// -----------------------------------------------------------------------------
+runTest('AZ. Complete source status: Valid start/end sets REVIEWED and status based on schoolDaysPerWeek', () => {
+  assert.ok(
+    tpmSource.includes("const isComplete = schoolDaysPerWeek === 5 || schoolDaysPerWeek === 6;") &&
+      tpmSource.includes("setWorkflowStatus('REVIEWED');") &&
+      tpmSource.includes("setResolutionStatus(isComplete ? 'RESOLVED' : 'PARTIALLY_RESOLVED');"),
+    'Applying complete candidate boundaries must set REVIEWED and RESOLVED only when schoolDaysPerWeek is 5 or 6'
+  );
+  assert.ok(
+    !tpmSource.includes("setWorkflowStatus('CONFIRMED')") ||
+      !tpmSource.includes("handleApplyOnlineCandidate = (candidate: CalendarSourceCandidate) => {\n    setWorkflowStatus('CONFIRMED')"),
+    'Applying online candidate must NEVER set workflowStatus to CONFIRMED'
+  );
+});
+
+// -----------------------------------------------------------------------------
+// TEST BC: Application to CalendarDay (Project validated events to CalendarDay[])
+// -----------------------------------------------------------------------------
+runTest('BC. Application to CalendarDay: Validated candidate event converts to range of CalendarDay entries with provenance', () => {
+  const candidate: CalendarSourceCandidate = {
+    sourceLevel: 'REGENCY',
+    province: 'Banten',
+    regency: 'Kota Tangerang',
+    academicYear: '2026/2027',
+    authority: 'Dinas Pendidikan Kota Tangerang',
+    documentTitle: 'Kaldik Kota Tangerang 2026/2027',
+    sourceUrl: 'https://disdik.tangerangkota.go.id/kaldik-2026-2027',
+    verificationStatus: 'PARTIAL',
+    retrievedAt: '2026-09-27T00:00:00.000Z',
+    events: [
+      {
+        name: 'Libur Semester Ganjil',
+        startDate: '2026-12-21',
+        endDate: '2026-12-23',
+        category: 'SEMESTER_BREAK',
+      },
+    ],
+  };
+
+  const days = projectCandidateEventsToCalendarDays({
+    candidate,
+    startDate: '2026-07-13',
+    endDate: '2026-12-31',
+    calendarId: 'cal-test-1',
+  });
+
+  const eventDays = days.filter((d) => d.date >= '2026-12-21' && d.date <= '2026-12-23');
+  assert.strictEqual(eventDays.length, 3, 'Must generate exactly 3 CalendarDay entries for 3-day range');
+
+  for (const ed of eventDays) {
+    assert.strictEqual(ed.notes, 'Libur Semester Ganjil');
+    assert.strictEqual(ed.status, 'BREAK');
+    assert.strictEqual(ed.category, 'SEMESTER_BREAK');
+    assert.strictEqual(ed.sourceType, 'REGIONAL_EDUCATION_CALENDAR');
+    assert.strictEqual(ed.sourceLayer, 'REGIONAL_BASE');
+    assert.strictEqual(ed.sourceUrl, 'https://disdik.tangerangkota.go.id/kaldik-2026-2027');
+    assert.strictEqual(ed.academicCalendarId, 'cal-test-1');
+  }
+});
+
+// -----------------------------------------------------------------------------
+// TEST BD: Manual Override Priority (SCHOOL_OVERRIDE > REGIONAL_BASE)
+// -----------------------------------------------------------------------------
+runTest('BD. Manual override priority: SCHOOL_OVERRIDE day is preserved over candidate event on same date', () => {
+  const candidate: CalendarSourceCandidate = {
+    sourceLevel: 'REGENCY',
+    province: 'Banten',
+    regency: 'Kota Tangerang',
+    academicYear: '2026/2027',
+    authority: 'Dinas Pendidikan Kota Tangerang',
+    documentTitle: 'Kaldik Kota Tangerang 2026/2027',
+    sourceUrl: 'https://disdik.tangerangkota.go.id/kaldik-2026-2027',
+    verificationStatus: 'PARTIAL',
+    retrievedAt: '2026-09-27T00:00:00.000Z',
+    events: [
+      {
+        name: 'Libur Semester Daerah',
+        startDate: '2026-12-21',
+        category: 'SEMESTER_BREAK',
+      },
+    ],
+  };
+
+  const manualDay: CalendarDay = {
+    id: 'manual-1',
+    academicCalendarId: 'cal-test-1',
+    date: '2026-12-21',
+    status: 'SCHOOL_EVENT',
+    notes: 'Kegiatan Khusus Sekolah Mandiri',
+    sourceType: 'SCHOOL_OVERRIDE',
+    sourceLayer: 'SCHOOL_OVERRIDE',
+    isOverridden: true,
+    category: 'SCHOOL_EVENT',
+  };
+
+  const days = projectCandidateEventsToCalendarDays({
+    candidate,
+    startDate: '2026-07-13',
+    endDate: '2026-12-31',
+    calendarId: 'cal-test-1',
+    existingDays: [manualDay],
+  });
+
+  const targetDay = days.find((d) => d.date === '2026-12-21');
+  assert.ok(targetDay, 'Day on 2026-12-21 must exist');
+  assert.strictEqual(targetDay.sourceType, 'SCHOOL_OVERRIDE', 'SCHOOL_OVERRIDE must win over candidate event');
+  assert.strictEqual(targetDay.status, 'SCHOOL_EVENT');
+  assert.strictEqual(targetDay.notes, 'Kegiatan Khusus Sekolah Mandiri');
+});
+
+// -----------------------------------------------------------------------------
+// TEST BE: Draft Only (Applying candidate does NOT call onSaveCalendar)
+// -----------------------------------------------------------------------------
+runTest('BE. Draft only: Applying online candidate updates draft states without calling onSaveCalendar', () => {
+  // Extract handleApplyOnlineCandidate body
+  const match = tpmSource.match(/const handleApplyOnlineCandidate = \([\s\S]*?\n  \};/);
+  assert.ok(match, 'handleApplyOnlineCandidate function must exist');
+  const fnBody = match[0];
+
+  assert.ok(
+    !fnBody.includes('onSaveCalendar('),
+    'handleApplyOnlineCandidate must not call onSaveCalendar (remains draft only)'
+  );
+  assert.ok(
+    tpmSource.includes('handleConfirmCalendar = () => {') &&
+      tpmSource.includes('onSaveCalendar(res.calendar, res.days);'),
+    'Confirm button (handleConfirmCalendar) must be the sole persistence gate calling onSaveCalendar'
   );
 });
 
