@@ -110,9 +110,52 @@ export function extractValidatedDate(
   return sanitized;
 }
 
+export const STRONG_CALENDAR_KEYWORDS = [
+  'kalender pendidikan',
+  'kaldik',
+  'kalender akademik',
+  'pedoman kalender pendidikan',
+  'kalender kegiatan pendidikan',
+  'kalender pendidikan tahun ajaran',
+  'kalender pendidikan tahun pelajaran',
+  'pedoman kalender',
+  'keputusan kalender',
+  'kalender kegiatan',
+];
+
+export const WEAK_CALENDAR_KEYWORDS = [
+  'tahun ajaran',
+  'tahun pelajaran',
+  'semester ganjil',
+  'semester genap',
+  'hari pertama masuk sekolah',
+  'libur semester',
+  'minggu efektif',
+  'hari efektif',
+];
+
+export const NEGATIVE_ADMISSION_KEYWORDS = [
+  'spmb',
+  'sistem penerimaan murid baru',
+  'penerimaan murid baru',
+  'ppdb',
+  'penerimaan peserta didik baru',
+  'pendaftaran peserta didik',
+  'jalur pendaftaran',
+  'jalur zonasi',
+  'jalur afirmasi',
+  'daya tampung',
+  'hasil seleksi',
+  'seleksi penerimaan',
+  'pendaftaran sekolah',
+];
+
 export interface SourceContentVerificationResult {
   isValid: boolean;
   hasCalendarKeyword: boolean;
+  hasStrongCalendarEvidence: boolean;
+  hasWeakCalendarEvidence: boolean;
+  hasNegativeEducationAdmissionEvidence: boolean;
   hasAcademicYear: boolean;
   hasGeographicSignal: boolean;
   rejectionReason?: string;
@@ -132,28 +175,36 @@ export function verifySourceContentRelevance(
     return {
       isValid: false,
       hasCalendarKeyword: false,
+      hasStrongCalendarEvidence: false,
+      hasWeakCalendarEvidence: false,
+      hasNegativeEducationAdmissionEvidence: false,
       hasAcademicYear: false,
       hasGeographicSignal: false,
       rejectionReason: 'EMPTY_CONTENT',
     };
   }
 
-  const combined = `${url} ${textOrHtml}`.toLowerCase();
+  const textLower = (textOrHtml || '').toLowerCase();
+  const urlLower = (url || '').toLowerCase();
+  const combined = `${urlLower} ${textLower}`;
+  const normalizedCombined = combined.replace(/[-_]/g, ' ');
 
-  // 1. Calendar keywords
-  const calendarKeywords = [
-    'kalender pendidikan',
-    'kaldik',
-    'kalender akademik',
-    'hari pertama masuk sekolah',
-    'semester genap',
-    'semester ganjil',
-    'tahun pelajaran',
-    'tahun ajaran',
-  ];
-  const hasCalendarKeyword = calendarKeywords.some((kw) => combined.includes(kw));
+  // 1. Strong Calendar keywords (REQUIRED)
+  const hasStrongCalendarEvidence = STRONG_CALENDAR_KEYWORDS.some(
+    (kw) => combined.includes(kw) || normalizedCombined.includes(kw)
+  );
 
-  // 2. Academic year matching (flexible formats: 2026/2027, 2026-2027, 2026 / 2027, 2026_2027)
+  // 2. Weak Supporting Calendar keywords
+  const hasWeakCalendarEvidence = WEAK_CALENDAR_KEYWORDS.some(
+    (kw) => combined.includes(kw) || normalizedCombined.includes(kw)
+  );
+
+  // 3. Negative Admission keywords
+  const hasNegativeEducationAdmissionEvidence = NEGATIVE_ADMISSION_KEYWORDS.some(
+    (kw) => combined.includes(kw) || normalizedCombined.includes(kw)
+  );
+
+  // 4. Academic year matching (flexible formats: 2026/2027, 2026-2027, 2026 / 2027, 2026_2027)
   const reqYear = request.academicYear.trim();
   const yearVariants: string[] = [reqYear];
   if (reqYear.includes('/')) {
@@ -164,7 +215,7 @@ export function verifySourceContentRelevance(
   }
   const hasAcademicYear = yearVariants.some((v) => combined.includes(v.toLowerCase()));
 
-  // 3. Geographic signal matching
+  // 5. Geographic signal matching
   let hasGeographicSignal = true;
   if (level === 'REGENCY' && request.regency) {
     const regCore = request.regency
@@ -187,15 +238,29 @@ export function verifySourceContentRelevance(
     }
   }
 
-  const isValid = hasCalendarKeyword && hasAcademicYear && hasGeographicSignal;
+  // Strong calendar evidence is mandatory. Weak keywords alone cannot qualify a candidate.
+  // If strong calendar evidence is absent and negative admission evidence is present -> NON_CALENDAR_EDUCATION_PAGE
+  const isValid = hasStrongCalendarEvidence && hasAcademicYear && hasGeographicSignal;
+
   let rejectionReason: string | undefined = undefined;
-  if (!hasCalendarKeyword) rejectionReason = 'MISSING_CALENDAR_KEYWORD';
-  else if (!hasAcademicYear) rejectionReason = 'MISSING_ACADEMIC_YEAR';
-  else if (!hasGeographicSignal) rejectionReason = 'GEOGRAPHIC_MISMATCH';
+  if (!hasStrongCalendarEvidence) {
+    if (hasNegativeEducationAdmissionEvidence) {
+      rejectionReason = 'NON_CALENDAR_EDUCATION_PAGE';
+    } else {
+      rejectionReason = 'MISSING_STRONG_CALENDAR_EVIDENCE';
+    }
+  } else if (!hasAcademicYear) {
+    rejectionReason = 'MISSING_ACADEMIC_YEAR';
+  } else if (!hasGeographicSignal) {
+    rejectionReason = 'GEOGRAPHIC_MISMATCH';
+  }
 
   return {
     isValid,
-    hasCalendarKeyword,
+    hasCalendarKeyword: hasStrongCalendarEvidence,
+    hasStrongCalendarEvidence,
+    hasWeakCalendarEvidence,
+    hasNegativeEducationAdmissionEvidence,
     hasAcademicYear,
     hasGeographicSignal,
     rejectionReason,
@@ -430,33 +495,25 @@ export function extractOfficialLinksFromHtml(
 
     // Scoring
     const combined = `${resolvedUrl} ${anchorText}`.toLowerCase();
+    const normalizedCombined = combined.replace(/[-_]/g, ' ');
     let score = 0;
 
-    // Calendar keywords
-    const calendarKeywords = [
-      'kalender pendidikan',
-      'kaldik',
-      'kalender akademik',
-      'pedoman kalender',
-      'keputusan kalender',
-      'tahun pelajaran',
-      'tahun ajaran',
-    ];
-
-    for (const kw of calendarKeywords) {
-      if (combined.includes(kw)) {
+    // Strong Calendar keywords ONLY (entry criterion)
+    let hasStrongKeyword = false;
+    for (const kw of STRONG_CALENDAR_KEYWORDS) {
+      if (combined.includes(kw) || normalizedCombined.includes(kw)) {
         score += 10;
+        hasStrongKeyword = true;
       }
     }
 
-    // Year boost
-    for (const yv of yearVariants) {
-      if (combined.includes(yv.toLowerCase())) {
-        score += 5;
+    // Year boost ONLY if strong calendar keyword is present
+    if (hasStrongKeyword) {
+      for (const yv of yearVariants) {
+        if (combined.includes(yv.toLowerCase())) {
+          score += 5;
+        }
       }
-    }
-
-    if (score > 0) {
       scoredLinks.push({ url: resolvedUrl, score });
     }
   }

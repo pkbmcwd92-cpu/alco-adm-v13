@@ -1988,6 +1988,203 @@ async function main() {
     assert.strictEqual(res.candidates[0].events, undefined, 'Hallucinated events must be discarded');
   });
 
+  // TEST BF: SPMB false positive rejected
+  await runTest('BF. SPMB false positive rejected: Official SPMB portal without calendar keywords is rejected', async () => {
+    const spmbUrl = 'https://spmb.tangerangkota.go.id/';
+    const spmbText = 'Website Resmi Sistem Penerimaan Murid Baru Kota Tangerang. SPMB Tahun Ajaran 2026/2027. Informasi jalur pendaftaran, daya tampung, dan hasil seleksi.';
+
+    const verification = verifySourceContentRelevance(
+      spmbText,
+      spmbUrl,
+      { academicYear: '2026/2027', province: 'Banten', regency: 'Kota Tangerang' },
+      'REGENCY'
+    );
+    assert.strictEqual(verification.isValid, false);
+    assert.strictEqual(verification.hasStrongCalendarEvidence, false);
+    assert.strictEqual(verification.hasNegativeEducationAdmissionEvidence, true);
+    assert.strictEqual(verification.rejectionReason, 'NON_CALENDAR_EDUCATION_PAGE');
+  });
+
+  // TEST BG: PPDB false positive rejected
+  await runTest('BG. PPDB false positive rejected: PPDB portal is rejected due to missing strong calendar evidence', async () => {
+    const ppdbUrl = 'https://ppdb.kotax.go.id/';
+    const ppdbText = 'PPDB Kota X Tahun Pelajaran 2026/2027 Jalur Zonasi Jalur Afirmasi Pendaftaran Peserta Didik Baru';
+
+    const verification = verifySourceContentRelevance(
+      ppdbText,
+      ppdbUrl,
+      { academicYear: '2026/2027', province: 'Jawa Barat', regency: 'Kota X' },
+      'REGENCY'
+    );
+    assert.strictEqual(verification.isValid, false);
+    assert.strictEqual(verification.hasStrongCalendarEvidence, false);
+    assert.strictEqual(verification.hasNegativeEducationAdmissionEvidence, true);
+  });
+
+  // TEST BH: Weak evidence alone rejected
+  await runTest('BH. Weak evidence alone rejected: Page with weak calendar terms but no strong evidence is rejected', async () => {
+    const genericUrl = 'https://disdik.tangerangkota.go.id/agenda-kegiatan';
+    const genericText = 'Tahun Ajaran 2026/2027 Semester Ganjil Hari Pertama Masuk Sekolah Kota Tangerang';
+
+    const verification = verifySourceContentRelevance(
+      genericText,
+      genericUrl,
+      { academicYear: '2026/2027', province: 'Banten', regency: 'Kota Tangerang' },
+      'REGENCY'
+    );
+    assert.strictEqual(verification.isValid, false);
+    assert.strictEqual(verification.hasStrongCalendarEvidence, false);
+    assert.strictEqual(verification.hasWeakCalendarEvidence, true);
+    assert.strictEqual(verification.rejectionReason, 'MISSING_STRONG_CALENDAR_EVIDENCE');
+  });
+
+  // TEST BI: Real calendar accepted
+  await runTest('BI. Real calendar accepted: Document with strong calendar evidence is accepted', async () => {
+    const kaldikUrl = 'https://disdik.tangerangkota.go.id/pedoman-kaldik-2026-2027';
+    const kaldikText = 'Pedoman Kalender Pendidikan Tahun Ajaran 2026/2027 Kota Tangerang Semester Ganjil dimulai 13 Juli 2026';
+
+    const verification = verifySourceContentRelevance(
+      kaldikText,
+      kaldikUrl,
+      { academicYear: '2026/2027', province: 'Banten', regency: 'Kota Tangerang' },
+      'REGENCY'
+    );
+    assert.strictEqual(verification.isValid, true);
+    assert.strictEqual(verification.hasStrongCalendarEvidence, true);
+  });
+
+  // TEST BJ: Calendar document containing admission reference still accepted
+  await runTest('BJ. Strong evidence overrides admission terms: Calendar document mentioning PPDB/SPMB is accepted', async () => {
+    const kaldikUrl = 'https://disdik.tangerangkota.go.id/kaldik-2026-2027';
+    const kaldikText = 'Kalender Pendidikan Tahun Ajaran 2026/2027 Kota Tangerang. Masa penerimaan murid baru dilaksanakan pada bulan Juni.';
+
+    const verification = verifySourceContentRelevance(
+      kaldikText,
+      kaldikUrl,
+      { academicYear: '2026/2027', province: 'Banten', regency: 'Kota Tangerang' },
+      'REGENCY'
+    );
+    assert.strictEqual(verification.isValid, true);
+    assert.strictEqual(verification.hasStrongCalendarEvidence, true);
+    assert.strictEqual(verification.hasNegativeEducationAdmissionEvidence, true);
+  });
+
+  // TEST BK: Reject SPMB then continue candidate search
+  await runTest('BK. Candidate continuation: SPMB candidate is rejected, search continues to next candidate', async () => {
+    const spmbUrl = 'https://spmb.examplekota.go.id';
+    const kaldikUrl = 'https://disdik.examplekota.go.id/kaldik-2026-2027';
+
+    const provider = new TrustedCalendarSearchProvider({
+      discoverCandidateUrls: async () => [spmbUrl, kaldikUrl],
+      fetchSourceContent: async (url) => {
+        if (url === spmbUrl) {
+          return {
+            ok: true,
+            status: 200,
+            text: 'Website Resmi Sistem Penerimaan Murid Baru Online Kota Tangerang Tahun Ajaran 2026/2027.',
+            rawHtml: '',
+            finalUrl: spmbUrl,
+            contentType: 'text/html',
+            isPdf: false,
+          };
+        }
+        if (url === kaldikUrl) {
+          return {
+            ok: true,
+            status: 200,
+            text: 'Pedoman Kalender Pendidikan Tahun Ajaran 2026/2027 Kota Tangerang resmi.',
+            rawHtml: '',
+            finalUrl: kaldikUrl,
+            contentType: 'text/html',
+            isPdf: false,
+          };
+        }
+        return null;
+      },
+      generatePlainContent: async () => ({
+        text: JSON.stringify([
+          {
+            province: 'Banten',
+            regency: 'Kota Tangerang',
+            academicYear: '2026/2027',
+            authority: 'Dinas Pendidikan Kota Tangerang',
+            documentTitle: 'Pedoman Kalender Pendidikan 2026/2027',
+          },
+        ]),
+      }),
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(res.diagnostic.reason, 'SUCCESS');
+    assert.strictEqual(res.candidates.length, 1);
+    assert.strictEqual(res.candidates[0].sourceUrl, kaldikUrl, 'Must select candidate #2 after candidate #1 SPMB is rejected');
+  });
+
+  // TEST BL: Regency false positives all rejected -> Province fallback
+  await runTest('BL. Province fallback: All REGENCY candidates rejected for non-calendar content -> falls back to PROVINCE', async () => {
+    const regencySpmbUrl = 'https://spmb.tangerangkota.go.id';
+    const provinceKaldikUrl = 'https://dindikbud.bantenprov.go.id/kaldik-2026-2027';
+
+    const provider = new TrustedCalendarSearchProvider({
+      discoverCandidateUrls: async (_req, level) => {
+        if (level === 'REGENCY') return [regencySpmbUrl];
+        if (level === 'PROVINCE') return [provinceKaldikUrl];
+        return [];
+      },
+      fetchSourceContent: async (url) => {
+        if (url === regencySpmbUrl) {
+          return {
+            ok: true,
+            status: 200,
+            text: 'Website Resmi Sistem Penerimaan Murid Baru Online Kota Tangerang Tahun Ajaran 2026/2027.',
+            rawHtml: '',
+            finalUrl: regencySpmbUrl,
+            contentType: 'text/html',
+            isPdf: false,
+          };
+        }
+        if (url === provinceKaldikUrl) {
+          return {
+            ok: true,
+            status: 200,
+            text: 'Keputusan Kepala Dinas Pendidikan dan Kebudayaan Provinsi Banten tentang Kalender Pendidikan Tahun Pelajaran 2026/2027.',
+            rawHtml: '',
+            finalUrl: provinceKaldikUrl,
+            contentType: 'text/html',
+            isPdf: false,
+          };
+        }
+        return null;
+      },
+      generatePlainContent: async () => ({
+        text: JSON.stringify([
+          {
+            province: 'Banten',
+            academicYear: '2026/2027',
+            authority: 'Dinas Pendidikan dan Kebudayaan Provinsi Banten',
+            documentTitle: 'Kaldik Provinsi Banten 2026/2027',
+          },
+        ]),
+      }),
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(res.diagnostic.reason, 'SUCCESS');
+    assert.strictEqual(res.candidates.length, 1);
+    assert.strictEqual(res.candidates[0].sourceLevel, 'PROVINCE');
+    assert.strictEqual(res.candidates[0].sourceUrl, provinceKaldikUrl);
+  });
+
   console.log(`\n========================================`);
   console.log(`ALL BACKEND CALENDAR SEARCH PROVIDER TESTS PASSED (${passedTests}/${totalTests})`);
   console.log(`========================================\n`);
