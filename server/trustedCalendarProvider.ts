@@ -293,75 +293,79 @@ export function isEventNameSupportedBySource(
 
 /**
  * Derives event category deterministically from evidence in source text and event name.
- * AI category hint is only used as fallback when evidence is neutral.
+ * AI category hint is ignored as authority and defaults to OTHER when semantic evidence is absent.
  */
 export function deriveEventCategoryFromEvidence(
   eventName: string,
   sourceText: string,
   eventDate?: string,
-  aiCategoryHint?: string
+  _aiCategoryHint?: string
 ): CalendarSourceEvent['category'] {
   const normEvent = normalizeCalendarEvidenceText(eventName);
   const windows = extractLocalEvidenceWindows(sourceText, eventDate, 250);
-  const combinedContext = `${normEvent} ${windows.join(' ')}`;
 
-  // 1. Mid Semester Break
+  // 1. Assessment (High priority: "Asesmen Sumatif Akhir Semester" must be ASSESSMENT, not SEMESTER_BREAK)
+  const assessmentKeywords = [
+    'asesmen', 'ujian', 'sumatif', 'pts', 'pas', 'pat', 'sts', 'sas', 'sat', 'ulangan', 'penilaian'
+  ];
   if (
-    combinedContext.includes('jeda tengah semester') ||
-    combinedContext.includes('libur tengah semester') ||
-    combinedContext.includes('tengah semester')
-  ) {
-    return 'MID_SEMESTER_BREAK';
-  }
-
-  // 2. Semester Break
-  if (
-    combinedContext.includes('libur semester') ||
-    combinedContext.includes('akhir semester') ||
-    combinedContext.includes('jeda semester') ||
-    combinedContext.includes('libur akhir semester') ||
-    normEvent.includes('libur semester') ||
-    normEvent.includes('akhir semester')
-  ) {
-    return 'SEMESTER_BREAK';
-  }
-
-  // 3. Assessment
-  if (
-    ['asesmen', 'ujian', 'sumatif', 'pts', 'pas', 'pat', 'sts', 'sas', 'sat', 'ulangan', 'penilaian'].some((k) =>
+    assessmentKeywords.some((k) =>
       normEvent.includes(k) || windows.some((w) => w.includes(k))
     )
   ) {
     return 'ASSESSMENT';
   }
 
-  // 4. School Event
+  // 2. Mid Semester Break
+  const midSemesterBreakKeywords = [
+    'jeda tengah semester', 'libur tengah semester', 'tengah semester'
+  ];
   if (
-    [
-      'kegiatan sekolah', 'class meeting', 'classmeeting', 'pesantren kilat',
-      'pengenalan lingkungan', 'mpls', 'matsama', 'porseni', 'karya wisata', 'rapat'
-    ].some((k) => normEvent.includes(k) || windows.some((w) => w.includes(k)))
+    midSemesterBreakKeywords.some((k) =>
+      normEvent.includes(k) || windows.some((w) => w.includes(k))
+    )
+  ) {
+    return 'MID_SEMESTER_BREAK';
+  }
+
+  // 3. Semester Break (Requires explicit break/libur evidence, "akhir semester" alone is NOT enough)
+  const semesterBreakKeywords = [
+    'libur semester', 'libur akhir semester', 'jeda semester', 'libur semester ganjil', 'libur semester genap'
+  ];
+  if (
+    semesterBreakKeywords.some((k) =>
+      normEvent.includes(k) || windows.some((w) => w.includes(k))
+    )
+  ) {
+    return 'SEMESTER_BREAK';
+  }
+
+  // 4. School Event
+  const schoolEventKeywords = [
+    'kegiatan sekolah', 'class meeting', 'classmeeting', 'pesantren kilat',
+    'pengenalan lingkungan', 'mpls', 'matsama', 'porseni', 'karya wisata', 'rapat'
+  ];
+  if (
+    schoolEventKeywords.some((k) =>
+      normEvent.includes(k) || windows.some((w) => w.includes(k))
+    )
   ) {
     return 'SCHOOL_EVENT';
   }
 
   // 5. Holiday
+  const holidayKeywords = [
+    'libur', 'cuti', 'hari libur', 'libur awal ramadhan', 'idul fitri', 'hari raya'
+  ];
   if (
-    ['libur', 'cuti', 'hari libur', 'libur awal ramadhan', 'idul fitri', 'hari raya'].some((k) =>
+    holidayKeywords.some((k) =>
       normEvent.includes(k) || windows.some((w) => w.includes(k))
     )
   ) {
     return 'HOLIDAY';
   }
 
-  // 6. Valid AI Hint or OTHER
-  const allowedCategories: CalendarSourceEvent['category'][] = [
-    'HOLIDAY', 'SEMESTER_BREAK', 'MID_SEMESTER_BREAK', 'ASSESSMENT', 'SCHOOL_EVENT', 'OTHER'
-  ];
-  if (aiCategoryHint && allowedCategories.includes(aiCategoryHint.toUpperCase() as any)) {
-    return aiCategoryHint.toUpperCase() as CalendarSourceEvent['category'];
-  }
-
+  // 6. Neutral semantic evidence -> OTHER (AI category is never an authority)
   return 'OTHER';
 }
 

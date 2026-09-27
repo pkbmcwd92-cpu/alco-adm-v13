@@ -2412,6 +2412,102 @@ async function main() {
     assert.strictEqual(readerCancelled, true, 'Stream reader must be cancelled');
   });
 
+  // TEST BS: Assessment priority over semester break ("Asesmen Sumatif Akhir Semester" -> ASSESSMENT)
+  await runTest('BS. Assessment priority: "Asesmen Sumatif Akhir Semester" mapped to ASSESSMENT despite AI SEMESTER_BREAK hint', async () => {
+    const verifiedUrl = 'https://disdik.tangerangkota.go.id/kaldik-2026-2027';
+    const sourceText = 'Kalender Pendidikan Tahun Ajaran 2026/2027.\nAsesmen Sumatif Akhir Semester dilaksanakan tanggal 10 Desember 2026.';
+
+    const provider = new TrustedCalendarSearchProvider({
+      discoverCandidateUrls: async () => [verifiedUrl],
+      fetchSourceContent: async () => ({
+        ok: true,
+        status: 200,
+        text: sourceText,
+        finalUrl: verifiedUrl,
+        contentType: 'text/html',
+        isPdf: false,
+      }),
+      generatePlainContent: async () => ({
+        text: JSON.stringify([
+          {
+            province: 'Banten',
+            regency: 'Kota Tangerang',
+            academicYear: '2026/2027',
+            authority: 'Dinas Pendidikan Kota Tangerang',
+            documentTitle: 'Kaldik Kota Tangerang 2026/2027',
+            events: [
+              {
+                name: 'Asesmen Sumatif Akhir Semester',
+                startDate: '2026-12-10',
+                category: 'SEMESTER_BREAK',
+              },
+            ],
+          },
+        ]),
+      }),
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(res.candidates.length, 1);
+    assert.ok(Array.isArray(res.candidates[0].events));
+    assert.strictEqual(res.candidates[0].events?.length, 1);
+    assert.strictEqual(res.candidates[0].events?.[0].name, 'Asesmen Sumatif Akhir Semester');
+    assert.strictEqual(res.candidates[0].events?.[0].category, 'ASSESSMENT', 'Must map to ASSESSMENT');
+  });
+
+  // TEST BT: Neutral semantic evidence falls back to OTHER (AI category is not an authority)
+  await runTest('BT. Neutral semantic evidence falls back to OTHER even if AI outputs HOLIDAY', async () => {
+    const verifiedUrl = 'https://disdik.tangerangkota.go.id/kaldik-2026-2027';
+    const sourceText = 'Kalender Pendidikan Tahun Ajaran 2026/2027.\nKegiatan dilaksanakan tanggal 10 Desember 2026.';
+
+    const provider = new TrustedCalendarSearchProvider({
+      discoverCandidateUrls: async () => [verifiedUrl],
+      fetchSourceContent: async () => ({
+        ok: true,
+        status: 200,
+        text: sourceText,
+        finalUrl: verifiedUrl,
+        contentType: 'text/html',
+        isPdf: false,
+      }),
+      generatePlainContent: async () => ({
+        text: JSON.stringify([
+          {
+            province: 'Banten',
+            regency: 'Kota Tangerang',
+            academicYear: '2026/2027',
+            authority: 'Dinas Pendidikan Kota Tangerang',
+            documentTitle: 'Kaldik Kota Tangerang 2026/2027',
+            events: [
+              {
+                name: 'Kegiatan',
+                startDate: '2026-12-10',
+                category: 'HOLIDAY',
+              },
+            ],
+          },
+        ]),
+      }),
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(res.candidates.length, 1);
+    assert.ok(Array.isArray(res.candidates[0].events));
+    assert.strictEqual(res.candidates[0].events?.length, 1);
+    assert.strictEqual(res.candidates[0].events?.[0].name, 'Kegiatan');
+    assert.strictEqual(res.candidates[0].events?.[0].category, 'OTHER', 'Must fall back to OTHER when no semantic evidence exists');
+  });
+
   console.log(`\n========================================`);
   console.log(`ALL BACKEND CALENDAR SEARCH PROVIDER TESTS PASSED (${passedTests}/${totalTests})`);
   console.log(`========================================\n`);
