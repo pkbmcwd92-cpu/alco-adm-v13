@@ -427,6 +427,274 @@ async function main() {
     assert.strictEqual(results[0].effectiveDate, undefined);
   });
 
+  // =========================================================================
+  // TEST M: Realistic Google Redirect Grounding URL Resolution
+  // =========================================================================
+  await runTest('M. Google Search Grounding redirect resolved to final official government landing URL', async () => {
+    const fakeGenerate = async (): Promise<GroundedSearchResponse> => {
+      return {
+        text: JSON.stringify([
+          {
+            province: 'Banten',
+            regency: 'Kota Tangerang',
+            academicYear: '2026/2027',
+            authority: 'Pemerintah Kota Tangerang',
+            documentTitle: 'Kalender Pendidikan Kota Tangerang 2026/2027',
+            sourceUrl: 'https://www.tangerangkota.go.id/dokumen/kaldik-2026-2027',
+            semesterStartDate: '2026-07-13',
+            semesterEndDate: '2026-12-19',
+          },
+        ]),
+        candidates: [
+          {
+            groundingMetadata: {
+              groundingChunks: [
+                {
+                  web: {
+                    uri: 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/test123',
+                    title: 'Website Resmi Pemerintah Kota Tangerang',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      };
+    };
+
+    const fakeResolver = async (uri: string): Promise<string | null> => {
+      if (uri.includes('vertexaisearch.cloud.google.com')) {
+        return 'https://www.tangerangkota.go.id/dokumen/kaldik-2026-2027';
+      }
+      return null;
+    };
+
+    const provider = new GroundedCalendarSearchProvider({
+      generateGroundedContent: fakeGenerate,
+      resolveGroundedUrl: fakeResolver,
+    });
+
+    const results = await provider.search({
+      academicYear: '2026/2027',
+      semester: 1,
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(results.length, 1, 'Candidate backed by resolved google redirect must be accepted');
+    assert.strictEqual(results[0].sourceLevel, 'REGENCY');
+    assert.strictEqual(results[0].sourceUrl, 'https://www.tangerangkota.go.id/dokumen/kaldik-2026-2027');
+  });
+
+  // =========================================================================
+  // TEST N: Negative Regression - Redirect resolves to non-government site
+  // =========================================================================
+  await runTest('N. Negative regression: Redirect resolving to non-government site is rejected', async () => {
+    const fakeGenerate = async (): Promise<GroundedSearchResponse> => {
+      return {
+        text: JSON.stringify([
+          {
+            province: 'Banten',
+            regency: 'Kota Tangerang',
+            academicYear: '2026/2027',
+            authority: 'Pemerintah Kota Tangerang',
+            documentTitle: 'Kaldik Kota Tangerang',
+            sourceUrl: 'https://www.tangerangkota.go.id/kaldik',
+          },
+        ]),
+        candidates: [
+          {
+            groundingMetadata: {
+              groundingChunks: [
+                {
+                  web: {
+                    uri: 'https://vertexaisearch.cloud.google.com/redirect/123',
+                    title: 'Portal',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      };
+    };
+
+    const fakeResolver = async (): Promise<string | null> => {
+      return 'https://example.com/kaldik'; // Non-government site
+    };
+
+    const provider = new GroundedCalendarSearchProvider({
+      generateGroundedContent: fakeGenerate,
+      resolveGroundedUrl: fakeResolver,
+    });
+
+    const results = await provider.search({
+      academicYear: '2026/2027',
+      semester: 1,
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(results.length, 0, 'Candidate with non-government landing redirect must be rejected');
+  });
+
+  // =========================================================================
+  // TEST O: Negative Regression - Redirect cannot resolve
+  // =========================================================================
+  await runTest('O. Negative regression: Redirect failing to resolve is rejected', async () => {
+    const fakeGenerate = async (): Promise<GroundedSearchResponse> => {
+      return {
+        text: JSON.stringify([
+          {
+            province: 'Banten',
+            regency: 'Kota Tangerang',
+            academicYear: '2026/2027',
+            authority: 'Pemerintah Kota Tangerang',
+            documentTitle: 'Kaldik Kota Tangerang',
+            sourceUrl: 'https://www.tangerangkota.go.id/kaldik',
+          },
+        ]),
+        candidates: [
+          {
+            groundingMetadata: {
+              groundingChunks: [
+                {
+                  web: {
+                    uri: 'https://vertexaisearch.cloud.google.com/redirect/failed',
+                    title: 'Broken Redirect',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      };
+    };
+
+    const fakeResolver = async (): Promise<string | null> => {
+      return null; // Failed resolution
+    };
+
+    const provider = new GroundedCalendarSearchProvider({
+      generateGroundedContent: fakeGenerate,
+      resolveGroundedUrl: fakeResolver,
+    });
+
+    const results = await provider.search({
+      academicYear: '2026/2027',
+      semester: 1,
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(results.length, 0, 'Unresolvable grounding redirect must be rejected');
+  });
+
+  // =========================================================================
+  // TEST P: Negative Regression - Redirect resolves to social/file-hosting URL
+  // =========================================================================
+  await runTest('P. Negative regression: Redirect resolving to social media or file hosting is rejected', async () => {
+    const fakeGenerate = async (): Promise<GroundedSearchResponse> => {
+      return {
+        text: JSON.stringify([
+          {
+            province: 'Banten',
+            regency: 'Kota Tangerang',
+            academicYear: '2026/2027',
+            authority: 'Pemerintah Kota Tangerang',
+            documentTitle: 'Kaldik Kota Tangerang',
+            sourceUrl: 'https://www.tangerangkota.go.id/kaldik',
+          },
+        ]),
+        candidates: [
+          {
+            groundingMetadata: {
+              groundingChunks: [
+                {
+                  web: {
+                    uri: 'https://vertexaisearch.cloud.google.com/redirect/social',
+                    title: 'Social Portal',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      };
+    };
+
+    const fakeResolver = async (): Promise<string | null> => {
+      return 'https://facebook.com/disdik.tangerangkota';
+    };
+
+    const provider = new GroundedCalendarSearchProvider({
+      generateGroundedContent: fakeGenerate,
+      resolveGroundedUrl: fakeResolver,
+    });
+
+    const results = await provider.search({
+      academicYear: '2026/2027',
+      semester: 1,
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(results.length, 0, 'Social media redirect landing must be rejected');
+  });
+
+  // =========================================================================
+  // TEST Q: Negative Regression - Candidate hostname differs from resolved official hostname
+  // =========================================================================
+  await runTest('Q. Negative regression: Mismatched candidate vs resolved official hostname is rejected', async () => {
+    const fakeGenerate = async (): Promise<GroundedSearchResponse> => {
+      return {
+        text: JSON.stringify([
+          {
+            province: 'Jawa Tengah',
+            regency: 'Kota Surakarta',
+            academicYear: '2026/2027',
+            authority: 'Pemerintah Kota Surakarta',
+            documentTitle: 'Kaldik Kota Surakarta',
+            sourceUrl: 'https://www.surakarta.go.id/dokumen/kaldik',
+          },
+        ]),
+        candidates: [
+          {
+            groundingMetadata: {
+              groundingChunks: [
+                {
+                  web: {
+                    uri: 'https://vertexaisearch.cloud.google.com/redirect/surakarta',
+                    title: 'Portal',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      };
+    };
+
+    const fakeResolver = async (): Promise<string | null> => {
+      // Grounding redirect resolves to a different city's official domain
+      return 'https://www.tangerangkota.go.id/dokumen/kaldik';
+    };
+
+    const provider = new GroundedCalendarSearchProvider({
+      generateGroundedContent: fakeGenerate,
+      resolveGroundedUrl: fakeResolver,
+    });
+
+    const results = await provider.search({
+      academicYear: '2026/2027',
+      semester: 1,
+      province: 'Jawa Tengah',
+      regency: 'Kota Surakarta',
+    });
+
+    assert.strictEqual(results.length, 0, 'Mismatched hostname candidate must be rejected');
+  });
+
   console.log(`\n========================================`);
   console.log(`ALL BACKEND CALENDAR SEARCH PROVIDER TESTS PASSED (${passedTests}/${totalTests})`);
   console.log(`========================================\n`);

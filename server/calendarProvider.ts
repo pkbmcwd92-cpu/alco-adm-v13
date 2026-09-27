@@ -10,6 +10,81 @@ import {
 export interface GroundedWebSource {
   uri: string;
   title?: string;
+  resolvedUri?: string;
+}
+
+export type GroundedUrlResolver = (uri: string) => Promise<string | null>;
+
+/**
+ * Default server-side grounded URL resolver that follows redirects to determine final landing URL.
+ * Enforces HTTPS and timeout/fail-closed protection.
+ */
+export const defaultGroundedUrlResolver: GroundedUrlResolver = async (uri: string): Promise<string | null> => {
+  if (!uri || typeof uri !== 'string') return null;
+  const trimmed = uri.trim();
+  if (!trimmed.startsWith('https://') && !trimmed.startsWith('http://')) return null;
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+    const response = await fetch(trimmed, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      },
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok && response.status !== 301 && response.status !== 302) {
+      return null;
+    }
+
+    const finalUrl = response.url;
+    if (finalUrl && finalUrl.startsWith('https://')) {
+      return finalUrl;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Asynchronously resolves grounded web source redirect URIs to their final landing destination.
+ * Preserves original uri and title while attaching resolvedUri.
+ */
+export async function resolveGroundedWebSources(
+  sources: GroundedWebSource[],
+  resolver: GroundedUrlResolver = defaultGroundedUrlResolver
+): Promise<GroundedWebSource[]> {
+  if (!Array.isArray(sources) || sources.length === 0) return [];
+
+  const resolvedSources: GroundedWebSource[] = [];
+
+  for (const src of sources) {
+    if (!src || !src.uri) continue;
+    let resolvedUri: string | undefined = undefined;
+
+    try {
+      const res = await resolver(src.uri);
+      if (res && typeof res === 'string' && res.trim() !== '') {
+        resolvedUri = res.trim();
+      }
+    } catch {
+      // ignore
+    }
+
+    resolvedSources.push({
+      uri: src.uri,
+      title: src.title,
+      resolvedUri,
+    });
+  }
+
+  return resolvedSources;
 }
 
 export interface GroundedCandidateChunk {
@@ -111,15 +186,38 @@ export function extractGroundedWebSources(response: unknown): GroundedWebSource[
 }
 
 /**
- * Verifies that a candidate sourceUrl is backed by verifiable search grounding metadata.
- * Candidate is discarded if no matching hostname or URI is found in grounding chunks.
+ * Checks if two hostnames match or belong to the same official government domain.
  */
-export function isCandidateBackedByGrounding(
+export function hostnamesMatch(host1: string, host2: string): boolean {
+  if (!host1 || !host2) return false;
+  const h1 = host1.toLowerCase().replace(/^www\./, '');
+  const h2 = host2.toLowerCase().replace(/^www\./, '');
+  if (h1 === h2) return true;
+  if (h1.endsWith(`.${h2}`) || h2.endsWith(`.${h1}`)) return true;
+
+  const getGoIdBase = (h: string) => {
+    const parts = h.split('.');
+    if (parts.length >= 3 && parts[parts.length - 1] === 'id' && parts[parts.length - 2] === 'go') {
+      return `${parts[parts.length - 3]}.go.id`;
+    }
+    return h;
+  };
+
+  const base1 = getGoIdBase(h1);
+  const base2 = getGoIdBase(h2);
+  return base1 === base2;
+}
+
+/**
+ * Reconciles a candidate source URL against grounded sources (including resolved landing URLs).
+ * Returns the verified canonical official URL if supported by grounding, or null if unverified / fail-closed.
+ */
+export function reconcileCandidateWithGrounding(
   candidateUrl: string,
   groundedSources: GroundedWebSource[]
-): boolean {
+): string | null {
   if (!candidateUrl || !Array.isArray(groundedSources) || groundedSources.length === 0) {
-    return false;
+    return null;
   }
 
   let candHost = '';
@@ -127,43 +225,54 @@ export function isCandidateBackedByGrounding(
     const candParsed = new URL(candidateUrl.trim());
     candHost = candParsed.hostname.toLowerCase();
   } catch {
-    return false;
+    return null;
   }
 
-  if (!candHost) return false;
-
-  const candCleanUrl = candidateUrl.trim().toLowerCase().split('#')[0].replace(/\/+$/, '');
+  if (!candHost) return null;
 
   for (const src of groundedSources) {
-    if (!src || !src.uri) continue;
-    const srcCleanUrl = src.uri.trim().toLowerCase().split('#')[0].replace(/\/+$/, '');
+    if (!src) continue;
 
-    // 1. Exact or prefix URI match
-    if (candCleanUrl === srcCleanUrl || srcCleanUrl.startsWith(candCleanUrl) || candCleanUrl.startsWith(srcCleanUrl)) {
-      return true;
+    // Determine official landing URL from src
+    let officialLandingUrl: string | null = null;
+
+    if (src.resolvedUri && isOfficialCalendarSourceUrl(src.resolvedUri)) {
+      officialLandingUrl = src.resolvedUri.trim();
+    } else if (src.uri && isOfficialCalendarSourceUrl(src.uri)) {
+      officialLandingUrl = src.uri.trim();
     }
 
-    // 2. Hostname match against grounded source URI
+    if (!officialLandingUrl) {
+      // Grounding source does not point to a valid official .go.id landing destination
+      continue;
+    }
+
+    let srcHost = '';
     try {
-      const srcParsed = new URL(src.uri);
-      const srcHost = srcParsed.hostname.toLowerCase();
-      if (candHost === srcHost || candHost.endsWith(`.${srcHost}`) || srcHost.endsWith(`.${candHost}`)) {
-        return true;
-      }
+      const srcParsed = new URL(officialLandingUrl);
+      srcHost = srcParsed.hostname.toLowerCase();
     } catch {
-      // ignore
+      continue;
     }
 
-    // 3. Hostname appears in grounded URI or title
-    if (src.uri.toLowerCase().includes(candHost)) {
-      return true;
-    }
-    if (src.title && src.title.toLowerCase().includes(candHost)) {
-      return true;
+    if (hostnamesMatch(candHost, srcHost)) {
+      // Hostnames match! Prefer verified resolved landing URL as canonical official source URL
+      return officialLandingUrl;
     }
   }
 
-  return false;
+  return null;
+}
+
+/**
+ * Verifies that a candidate sourceUrl is backed by verifiable search grounding metadata.
+ * Candidate is discarded if no matching hostname or URI is found in grounding chunks.
+ */
+export function isCandidateBackedByGrounding(
+  candidateUrl: string,
+  groundedSources: GroundedWebSource[]
+): boolean {
+  return reconcileCandidateWithGrounding(candidateUrl, groundedSources) !== null;
 }
 
 /**
@@ -324,13 +433,14 @@ export function parseCalendarSearchResponse(
       continue;
     }
 
-    // Official government HTTPS domain filter
-    if (!isOfficialCalendarSourceUrl(sourceUrl)) {
+    // Must be supported by grounding search metadata and reconcile to an official .go.id URL
+    const canonicalSourceUrl = reconcileCandidateWithGrounding(sourceUrl, groundedSources);
+    if (!canonicalSourceUrl) {
       continue;
     }
 
-    // Must be supported by grounding search metadata
-    if (!isCandidateBackedByGrounding(sourceUrl, groundedSources)) {
+    // Double-check official government HTTPS domain filter
+    if (!isOfficialCalendarSourceUrl(canonicalSourceUrl)) {
       continue;
     }
 
@@ -366,7 +476,7 @@ export function parseCalendarSearchResponse(
       authority,
       documentTitle,
       documentNumber: typeof item.documentNumber === 'string' && item.documentNumber.trim() ? item.documentNumber.trim() : undefined,
-      sourceUrl,
+      sourceUrl: canonicalSourceUrl,
       publicationDate,
       effectiveDate,
       semesterStartDate,
@@ -382,16 +492,24 @@ export function parseCalendarSearchResponse(
   return candidates;
 }
 
+export interface GroundedCalendarSearchProviderOptions {
+  apiKey?: string;
+  generateGroundedContent?: GroundedGenerateFn;
+  resolveGroundedUrl?: GroundedUrlResolver;
+}
+
 /**
  * Backend Calendar Provider with Google Search Grounding.
  * Implements canonical search hierarchy (REGENCY -> PROVINCE -> NATIONAL) with short-circuiting.
  */
 export class GroundedCalendarSearchProvider implements CalendarDataProvider {
   private customGenerate?: GroundedGenerateFn;
+  private resolveGroundedUrl: GroundedUrlResolver;
   private apiKey?: string;
 
   constructor(options?: GroundedCalendarSearchProviderOptions) {
     this.customGenerate = options?.generateGroundedContent;
+    this.resolveGroundedUrl = options?.resolveGroundedUrl || defaultGroundedUrlResolver;
     this.apiKey = options?.apiKey || process.env.GEMINI_API_KEY;
   }
 
@@ -476,7 +594,8 @@ export class GroundedCalendarSearchProvider implements CalendarDataProvider {
       const regencyResponse = await this.executeGroundedSearch(regencyPrompt);
 
       if (regencyResponse && regencyResponse.text) {
-        const groundedSources = extractGroundedWebSources(regencyResponse);
+        const rawSources = extractGroundedWebSources(regencyResponse);
+        const groundedSources = await resolveGroundedWebSources(rawSources, this.resolveGroundedUrl);
         const regencyCandidates = parseCalendarSearchResponse(
           regencyResponse.text,
           'REGENCY',
@@ -497,7 +616,8 @@ export class GroundedCalendarSearchProvider implements CalendarDataProvider {
       const provinceResponse = await this.executeGroundedSearch(provincePrompt);
 
       if (provinceResponse && provinceResponse.text) {
-        const groundedSources = extractGroundedWebSources(provinceResponse);
+        const rawSources = extractGroundedWebSources(provinceResponse);
+        const groundedSources = await resolveGroundedWebSources(rawSources, this.resolveGroundedUrl);
         const provinceCandidates = parseCalendarSearchResponse(
           provinceResponse.text,
           'PROVINCE',
@@ -517,7 +637,8 @@ export class GroundedCalendarSearchProvider implements CalendarDataProvider {
     const nationalResponse = await this.executeGroundedSearch(nationalPrompt);
 
     if (nationalResponse && nationalResponse.text) {
-      const groundedSources = extractGroundedWebSources(nationalResponse);
+      const rawSources = extractGroundedWebSources(nationalResponse);
+      const groundedSources = await resolveGroundedWebSources(rawSources, this.resolveGroundedUrl);
       return parseCalendarSearchResponse(
         nationalResponse.text,
         'NATIONAL',
