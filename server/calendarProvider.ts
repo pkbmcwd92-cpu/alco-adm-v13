@@ -318,10 +318,9 @@ export function buildCalendarSearchPrompt(
   level: CalendarSourceLevel
 ): string {
   if (level === 'REGENCY') {
-    return `Cari dokumen resmi Kalender Pendidikan (Kaldik) untuk wilayah:
+    return `Cari dokumen resmi Kalender Pendidikan (Kaldik) Tahun Ajaran ${request.academicYear} untuk wilayah:
 Kabupaten/Kota: ${request.regency || ''}
 Provinsi: ${request.province || ''}
-Tahun Ajaran: ${request.academicYear}
 
 Prioritaskan sumber resmi pemerintah daerah / dinas pendidikan / JDIH (domain .go.id).
 JANGAN MENGARANG nomor surat keputusan, tanggal, atau URL.
@@ -334,21 +333,22 @@ Kembalikan HANYA JSON array dengan struktur:
     "regency": "${request.regency || ''}",
     "academicYear": "${request.academicYear}",
     "authority": "Nama Dinas Pendidikan / Pemerintah Daerah",
-    "documentTitle": "Judul Dokumen / Pedoman Kalender Pendidikan",
+    "documentTitle": "Judul Dokumen / Pedoman Kalender Pendidikan Tahun Ajaran ${request.academicYear}",
     "documentNumber": "Nomor Keputusan/Surat Edaran jika ada",
     "sourceUrl": "https://...",
     "publicationDate": "YYYY-MM-DD",
     "effectiveDate": "YYYY-MM-DD",
-    "semesterStartDate": "YYYY-MM-DD",
-    "semesterEndDate": "YYYY-MM-DD"
+    "semester1StartDate": "YYYY-MM-DD",
+    "semester1EndDate": "YYYY-MM-DD",
+    "semester2StartDate": "YYYY-MM-DD",
+    "semester2EndDate": "YYYY-MM-DD"
   }
 ]`;
   }
 
   if (level === 'PROVINCE') {
-    return `Cari dokumen resmi Kalender Pendidikan (Kaldik) tingkat Provinsi untuk:
+    return `Cari dokumen resmi Kalender Pendidikan (Kaldik) Tahun Ajaran ${request.academicYear} tingkat Provinsi untuk:
 Provinsi: ${request.province || ''}
-Tahun Ajaran: ${request.academicYear}
 
 Prioritaskan sumber resmi Dinas Pendidikan Provinsi / Pemerintah Provinsi / JDIH Provinsi (domain .go.id).
 JANGAN MENGARANG nomor surat keputusan, tanggal, atau URL.
@@ -360,22 +360,24 @@ Kembalikan HANYA JSON array dengan struktur:
     "province": "${request.province || ''}",
     "academicYear": "${request.academicYear}",
     "authority": "Dinas Pendidikan Provinsi ...",
-    "documentTitle": "Judul Dokumen / Pedoman Kalender Pendidikan Provinsi",
+    "documentTitle": "Judul Dokumen / Pedoman Kalender Pendidikan Provinsi Tahun Ajaran ${request.academicYear}",
     "documentNumber": "Nomor Keputusan/Surat Edaran jika ada",
     "sourceUrl": "https://...",
     "publicationDate": "YYYY-MM-DD",
     "effectiveDate": "YYYY-MM-DD",
-    "semesterStartDate": "YYYY-MM-DD",
-    "semesterEndDate": "YYYY-MM-DD"
+    "semester1StartDate": "YYYY-MM-DD",
+    "semester1EndDate": "YYYY-MM-DD",
+    "semester2StartDate": "YYYY-MM-DD",
+    "semester2EndDate": "YYYY-MM-DD"
   }
 ]`;
   }
 
   // NATIONAL level
-  return `Cari pedoman / regulasi kalender pendidikan resmi tingkat Nasional dari Kementerian Pendidikan Dasar dan Menengah (Kemendikdasmen / Kemdikbud) untuk:
+  return `Cari pedoman / regulasi kalender pendidikan resmi tingkat Nasional dari Kementerian Pendidikan Dasar dan Menengah RI untuk:
 Tahun Ajaran: ${request.academicYear}
 
-Cari informasi rujukan hari pertama masuk sekolah / batas semester nasional jika ada.
+Cari informasi rujukan hari pertama masuk sekolah / ketentuan kalender pendidikan nasional untuk Tahun Ajaran ${request.academicYear}.
 JANGAN MENGARANG kalender pendidikan nasional jika tidak diterbitkan secara resmi.
 Prioritaskan situs resmi kemendikdasmen.go.id atau kemdikbud.go.id.
 
@@ -389,8 +391,10 @@ Kembalikan HANYA JSON array dengan struktur:
     "sourceUrl": "https://kemendikdasmen.go.id/...",
     "publicationDate": "YYYY-MM-DD",
     "effectiveDate": "YYYY-MM-DD",
-    "semesterStartDate": "YYYY-MM-DD",
-    "semesterEndDate": "YYYY-MM-DD"
+    "semester1StartDate": "YYYY-MM-DD",
+    "semester1EndDate": "YYYY-MM-DD",
+    "semester2StartDate": "YYYY-MM-DD",
+    "semester2EndDate": "YYYY-MM-DD"
   }
 ]`;
 }
@@ -485,6 +489,10 @@ export function parseCalendarSearchResponse(
     // Sanitize dates
     const publicationDate = sanitizeIsoDate(item.publicationDate);
     const effectiveDate = sanitizeIsoDate(item.effectiveDate);
+    const semester1StartDate = sanitizeIsoDate(item.semester1StartDate);
+    const semester1EndDate = sanitizeIsoDate(item.semester1EndDate);
+    const semester2StartDate = sanitizeIsoDate(item.semester2StartDate);
+    const semester2EndDate = sanitizeIsoDate(item.semester2EndDate);
     const semesterStartDate = sanitizeIsoDate(item.semesterStartDate);
     const semesterEndDate = sanitizeIsoDate(item.semesterEndDate);
 
@@ -499,6 +507,10 @@ export function parseCalendarSearchResponse(
       sourceUrl: canonicalSourceUrl,
       publicationDate,
       effectiveDate,
+      semester1StartDate,
+      semester1EndDate,
+      semester2StartDate,
+      semester2EndDate,
       semesterStartDate,
       semesterEndDate,
       // Online search results are always PARTIAL (never automatically verified)

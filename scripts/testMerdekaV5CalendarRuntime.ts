@@ -83,15 +83,14 @@ runTest('1. TimePlanningManager source contract calls resolveCalendarOnline befo
 });
 
 // -----------------------------------------------------------------------------
-// TEST 2: Request includes academicYear, semester, province, regency
+// TEST 2: Request includes academicYear, province, regency (Annual Discovery Scope)
 // -----------------------------------------------------------------------------
-runTest('2. Online calendar search request parameters include academicYear, semester, province, regency', () => {
+runTest('2. Online calendar search request parameters include academicYear, province, regency', () => {
   assert.ok(
     tpmSource.includes('academicYear,') &&
-      tpmSource.includes('semester: semNum,') &&
       tpmSource.includes('province: prov,') &&
-      tpmSource.includes('regency: regency'),
-    'resolveCalendarOnline call must transmit academicYear, semester, province, and regency'
+      (tpmSource.includes('regency:') || tpmSource.includes('regency,')),
+    'resolveCalendarOnline call must transmit academicYear, province, and regency for annual discovery scope'
   );
 });
 

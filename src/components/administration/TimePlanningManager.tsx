@@ -33,6 +33,7 @@ import { resolveCalendarOnline } from '../../services/calendarProviderClient';
 import {
   CalendarSourceCandidate,
   CalendarSearchDiagnostic,
+  CalendarSourceLevel,
 } from '../../services/calendarProvider';
 import {
   Clock,
@@ -170,19 +171,74 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
   const [saveNotification, setSaveNotification] = useState<string | null>(null);
   const [resolutionMessage, setResolutionMessage] = useState<string | null>(null);
 
+  // Derived calculations for JP & Calendar completeness
+  const isCalendarConfigComplete = Boolean(
+    startDate && endDate && schoolDaysPerWeek && (schoolDaysPerWeek === 5 || schoolDaysPerWeek === 6)
+  );
+
+  const effectiveResult = useMemo(() => {
+    if (!startDate || !endDate || !schoolDaysPerWeek) {
+      return { status: 'UNRESOLVED' as const, effectiveLearningDays: 0, holidayDays: 0, effectiveWeeks: 0 };
+    }
+    return calculateEffectiveDays(
+      { startDate, endDate, schoolDaysPerWeek },
+      days
+    );
+  }, [startDate, endDate, days, schoolDaysPerWeek]);
+
+  const effectiveWeeks = useMemo(() => {
+    if (!startDate || !endDate || !schoolDaysPerWeek) return null;
+    const res = calculateEffectiveWeeks(effectiveResult.effectiveLearningDays, schoolDaysPerWeek);
+    return res.effectiveWeeksRounded;
+  }, [effectiveResult, schoolDaysPerWeek, startDate, endDate]);
+
+  const totalAvailableJP = useMemo(() => {
+    if (effectiveWeeks === null || jpPerWeek === null || !schoolDaysPerWeek) return null;
+    const res = calculateAvailableJP({
+      subjectWeeklyJP: jpPerWeek,
+      effectiveLearningDays: effectiveResult.effectiveLearningDays,
+      schoolDaysPerWeek,
+    });
+    return res.availableJP;
+  }, [effectiveResult, jpPerWeek, schoolDaysPerWeek, effectiveWeeks]);
+
+  const totalPlannedJP = useMemo(() => {
+    if (isK13Curriculum) {
+      if (!k13Analysis?.items) return 0;
+      return k13Analysis.items.reduce((acc, item) => acc + (Number(item.targetHours) || 0), 0);
+    } else {
+      if (!atp?.items) return 0;
+      return atp.items.reduce((acc, item) => acc + (Number(item.jp) || 0), 0);
+    }
+  }, [isK13Curriculum, k13Analysis, atp]);
+
+  const jpDifference = useMemo(() => {
+    if (totalAvailableJP === null) return null;
+    return totalAvailableJP - totalPlannedJP;
+  }, [totalAvailableJP, totalPlannedJP]);
+
   // Online Discovery & Resolution State
+  type CalendarAISearchStatus =
+    | 'IDLE'
+    | 'SEARCHING'
+    | 'SUCCESS'
+    | 'NOT_FOUND'
+    | 'ERROR';
+
   const [onlineDiscovery, setOnlineDiscovery] = useState<CalendarSourceCandidate | null>(null);
   const [isOnlineSearching, setIsOnlineSearching] = useState<boolean>(false);
   const [onlineSearchError, setOnlineSearchError] = useState<string | null>(null);
   const [onlineDiagnostic, setOnlineDiagnostic] = useState<CalendarSearchDiagnostic | null>(null);
   const [copiedDiagnostic, setCopiedDiagnostic] = useState<boolean>(false);
+  const [aiSearchStatus, setAiSearchStatus] = useState<CalendarAISearchStatus>('IDLE');
+  const [isLocalFallbackUsed, setIsLocalFallbackUsed] = useState<boolean>(false);
 
   const formatDiagnosticCopyText = (diag: CalendarSearchDiagnostic): string => {
     const lines: string[] = [];
     lines.push('=== DIAGNOSTIK PENCARIAN KALENDER ONLINE ===');
     lines.push(`Reason: ${diag.reason}`);
     lines.push(`AI Configured: ${diag.aiConfigured ? 'true' : 'false'}`);
-    lines.push(`Wilayah Kriteria: ${searchRegency || '-'}, ${searchProvince || '-'} (${academicYear || '-'} Semester ${semester || '-'})`);
+    lines.push(`Wilayah Kriteria: ${searchRegency || '-'}, ${searchProvince || '-'} (${academicYear || '-'})`);
     lines.push('');
 
     for (const st of diag.stages) {
@@ -215,149 +271,36 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
     });
   };
 
-  // Auto-resolve on initialization if calendar is empty or unconfigured
-  useEffect(() => {
-    if (
-      (!calendar || !calendar.startDate || !calendar.endDate) &&
-      school.province &&
-      academicSetting.academicYear &&
-      academicSetting.semester
-    ) {
-      handleAutoResolve(false);
-    }
-  }, [school.province, academicSetting.academicYear, academicSetting.semester]);
-
-  // Exact Effective Days & Weeks calculation from JP Engine
-  const effectiveResult = useMemo(() => {
-    if (!startDate || !endDate || !schoolDaysPerWeek) {
-      return calculateEffectiveDays(
-        {
-          startDate: '',
-          endDate: '',
-          schoolDaysPerWeek: undefined,
-        },
-        []
-      );
-    }
-    return calculateEffectiveDays(
-      {
-        startDate,
-        endDate,
-        schoolDaysPerWeek,
-        semester: semester ? (semester === '1' ? '1 (Ganjil)' : '2 (Genap)') : undefined,
-        academicYear,
-      },
-      days
-    );
-  }, [startDate, endDate, schoolDaysPerWeek, semester, academicYear, days]);
-
-  const effectiveWeeksResult = useMemo(() => {
-    return calculateEffectiveWeeks(effectiveResult.effectiveLearningDays, schoolDaysPerWeek);
-  }, [effectiveResult.effectiveLearningDays, schoolDaysPerWeek]);
-
-  const effectiveWeeks =
-    effectiveWeeksResult.status === 'RESOLVED' ? effectiveWeeksResult.effectiveWeeksRounded : null;
-
-  // Compute available JP
-  const availableJPResult = useMemo(() => {
-    return calculateAvailableJP({
-      subjectWeeklyJP: jpPerWeek,
-      effectiveLearningDays:
-        effectiveResult.status === 'RESOLVED' ? effectiveResult.effectiveLearningDays : null,
-      schoolDaysPerWeek,
-      calendarStatus: effectiveResult.status,
-      effectiveDayStatus: effectiveResult.status,
-      semester: semester ? (semester === '1' ? '1 (Ganjil)' : '2 (Genap)') : undefined,
-      academicYear,
-      level: academicSetting.level,
-      grade: academicSetting.grade,
-      subject: academicSetting.subject,
-      officialAnnualJP: officialRule.intrakurikulerAnnualJP ?? officialRule.annualJP,
-    });
-  }, [
-    jpPerWeek,
-    effectiveResult,
-    schoolDaysPerWeek,
-    semester,
-    academicYear,
-    academicSetting,
-    officialRule,
-  ]);
-
-  const totalAvailableJP =
-    availableJPResult.status === 'RESOLVED' ? availableJPResult.availableJP : null;
-
-  // Planned JP calculation
-  const totalPlannedJP = useMemo(() => {
-    if (isK13Curriculum) {
-      return (k13Analysis?.items || []).reduce((acc, item) => {
-        const match = allocations.find(
-          (a) =>
-            (a.sourceType === 'KD' && a.sourceId === item.id) ||
-            a.sourceId === item.id ||
-            a.tpId === item.id
-        );
-        const jp = match?.allocatedJP ?? match?.jp ?? (item.alokasiJp ? Number(item.alokasiJp) : 0);
-        return acc + jp;
-      }, 0);
-    }
-    return (atp?.items || []).reduce((acc, curr) => {
-      const match = allocations.find(
-        (a) =>
-          (a.sourceType === 'ATP_ITEM' && a.sourceId === curr.id) ||
-          a.atpItemId === curr.id ||
-          a.sourceId === curr.id
-      );
-      const itemJp =
-        curr.jp !== undefined && curr.jp !== null
-          ? Number(curr.jp)
-          : match?.allocatedJP ?? match?.jp ?? 0;
-      return acc + (itemJp || 0);
-    }, 0);
-  }, [isK13Curriculum, k13Analysis, atp, allocations]);
-
-  const jpDifference =
-    totalAvailableJP !== null && totalPlannedJP > 0 ? totalAvailableJP - totalPlannedJP : null;
-
-  const isCalendarConfigComplete =
-    Boolean(startDate) &&
-    Boolean(endDate) &&
-    Boolean(semester) &&
-    (schoolDaysPerWeek === 5 || schoolDaysPerWeek === 6) &&
-    effectiveResult.status === 'RESOLVED';
-
-  // =========================================================================
-  // WORKFLOW ACTION HANDLERS
-  // =========================================================================
-
-  // Step 1: AUTO RESOLVE (SEARCH-FIRST)
+  // Step 1: SEARCH CALENDAR WITH AI (ANNUAL SCOPE)
   const handleAutoResolve = async (showNotification: boolean = true) => {
-    const semNum = semester === '1' || semester?.startsWith('1') ? 1 : semester === '2' || semester?.startsWith('2') ? 2 : null;
     const prov = searchProvince || selectedProvince || school.province;
     const regency = searchRegency || school.regency;
 
-    // Validation guard: academicYear, semester, province required
-    if (!academicYear || !semNum || !prov) {
+    // Validation guard: academicYear and province required
+    if (!academicYear || !prov) {
       setOnlineDiscovery(null);
       setWorkflowStatus('UNRESOLVED');
       setResolutionStatus('REGION_REQUIRED');
-      setResolutionMessage('Pilih Wilayah Provinsi dan Semester terlebih dahulu.');
+      setResolutionMessage('Pilih Wilayah Provinsi dan Kabupaten/Kota terlebih dahulu.');
       if (showNotification) {
-        setSaveNotification('Pilih Wilayah Provinsi dan Semester terlebih dahulu.');
+        setSaveNotification('Pilih Wilayah Provinsi dan Kabupaten/Kota terlebih dahulu.');
         setTimeout(() => setSaveNotification(null), 3500);
       }
       return;
     }
 
-    // 1. ONLINE SEARCH FIRST
+    // 1. ONLINE SEARCH FIRST (YEAR SCOPED)
     setIsOnlineSearching(true);
+    setAiSearchStatus('SEARCHING');
     setOnlineSearchError(null);
+    setIsLocalFallbackUsed(false);
 
     let onlineSuccess = false;
+    let candidateLevel: CalendarSourceLevel | null = null;
+
     try {
       const onlineRes = await resolveCalendarOnline({
         academicYear,
-        semester: semNum,
         province: prov,
         regency: regency || undefined,
       });
@@ -367,34 +310,44 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
       }
 
       if (onlineRes.selectedSource) {
-        onlineSuccess = true;
         setOnlineDiscovery(onlineRes.selectedSource);
-        setWorkflowStatus('UNRESOLVED');
+        candidateLevel = onlineRes.selectedSource.sourceLevel;
 
-        if (onlineRes.selectedSource.sourceLevel === 'NATIONAL') {
-          setResolutionMessage('Sumber nasional ditemukan sebagai referensi. Kalender semester daerah belum ditemukan.');
+        if (candidateLevel === 'NATIONAL') {
+          setAiSearchStatus('NOT_FOUND');
+          setResolutionMessage('Pencarian AI menemukan sumber nasional sebagai referensi, tetapi belum menemukan Kalender Pendidikan daerah.');
           if (showNotification) {
-            setSaveNotification('Sumber nasional ditemukan sebagai referensi. Kalender semester daerah belum ditemukan.');
+            setSaveNotification('Pencarian AI menemukan sumber nasional sebagai referensi, tetapi belum menemukan Kalender Pendidikan daerah.');
             setTimeout(() => setSaveNotification(null), 4000);
           }
         } else {
-          setResolutionMessage('Sumber resmi ditemukan — tinjau sebelum digunakan.');
+          onlineSuccess = true;
+          setAiSearchStatus('SUCCESS');
+          setWorkflowStatus('UNRESOLVED');
+          setResolutionMessage(`Sumber resmi ${candidateLevel === 'REGENCY' ? 'Kabupaten/Kota' : 'Provinsi'} ditemukan — tinjau sebelum digunakan.`);
           if (showNotification) {
-            setSaveNotification('Sumber resmi ditemukan online — perlu verifikasi');
+            setSaveNotification('Sumber resmi ditemukan online — klik "Gunakan sebagai Acuan" untuk menerapkan.');
             setTimeout(() => setSaveNotification(null), 4000);
           }
+          return;
         }
-        return;
       } else {
+        const diagReason = onlineRes.diagnostic?.reason;
+        if (diagReason === 'MODEL_FAILURE' || diagReason === 'NO_API_KEY') {
+          setAiSearchStatus('ERROR');
+        } else {
+          setAiSearchStatus('NOT_FOUND');
+        }
         setOnlineSearchError(onlineRes.message || 'Pencarian kalender online belum menemukan sumber resmi terverifikasi.');
       }
     } catch (err: any) {
+      setAiSearchStatus('ERROR');
       setOnlineSearchError(err?.message || 'Gagal melakukan pencarian kalender online');
     } finally {
       setIsOnlineSearching(false);
     }
 
-    // 2. VERIFIED LOCAL CACHE FALLBACK (if online search produces no candidate or fails)
+    // 2. VERIFIED LOCAL CACHE FALLBACK (if online search produces no regional candidate)
     if (!onlineSuccess) {
       const res = resolveOfficialCalendar({
         province: prov,
@@ -407,8 +360,7 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
       });
 
       if (res.isResolved && res.calendar) {
-        setOnlineDiscovery(null);
-        setOnlineSearchError(null);
+        setIsLocalFallbackUsed(true);
         setStartDate(res.calendar.startDate);
         setEndDate(res.calendar.endDate);
         if (res.calendar.schoolDaysPerWeek === 5 || res.calendar.schoolDaysPerWeek === 6) {
@@ -431,7 +383,6 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
         }
       } else {
         // 3. MANUAL FALLBACK
-        setOnlineDiscovery(null);
         setWorkflowStatus('UNRESOLVED');
         setResolutionStatus(res.resolutionStatus);
         setResolutionMessage(res.diagnostic);
@@ -444,15 +395,26 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
   };
 
   const handleApplyOnlineCandidate = (candidate: CalendarSourceCandidate) => {
-    if (!candidate.semesterStartDate || !candidate.semesterEndDate) {
+    // Project active semester boundaries from annual candidate
+    const activeSem = semester === '2' || semester === 2 ? 2 : 1;
+
+    let targetStart = activeSem === 1
+      ? (candidate.semester1StartDate || candidate.semesterStartDate)
+      : (candidate.semester2StartDate || candidate.semesterStartDate);
+
+    let targetEnd = activeSem === 1
+      ? (candidate.semester1EndDate || candidate.semesterEndDate)
+      : (candidate.semester2EndDate || candidate.semesterEndDate);
+
+    if (!targetStart || !targetEnd) {
       alert(
-        'Sumber resmi ditemukan, tetapi batas tanggal semester tidak dapat ditentukan secara terverifikasi. Silakan tinjau dokumen dan lengkapi tanggal secara manual.'
+        `Sumber resmi Tahun Ajaran ${candidate.academicYear} ditemukan, tetapi batas Semester ${activeSem} belum dapat ditentukan secara terverifikasi. Silakan buka sumber resmi atau lengkapi tanggal secara manual.`
       );
       return;
     }
 
-    setStartDate(candidate.semesterStartDate);
-    setEndDate(candidate.semesterEndDate);
+    setStartDate(targetStart);
+    setEndDate(targetEnd);
     setSourceAuthority(candidate.authority);
     setSourceName(candidate.documentTitle);
     setSourceDocumentNumber(candidate.documentNumber || '');
@@ -461,8 +423,8 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
     setSourceType('REGIONAL_EDUCATION_CALENDAR');
     setWorkflowStatus('AUTO_RESOLVED');
     setResolutionStatus('RESOLVED');
-    setResolutionMessage(`Acuan kalender diambil dari ${candidate.authority} (${candidate.documentTitle})`);
-    setSaveNotification('Tanggal semester diisi dari acuan resmi online — klik "Konfirmasi Kalender" untuk menetapkan.');
+    setResolutionMessage(`Acuan kalender diambil dari ${candidate.authority} (${candidate.documentTitle}) - Semester ${activeSem}`);
+    setSaveNotification(`Tanggal Semester ${activeSem} diisi dari acuan resmi online — klik "Konfirmasi Kalender" untuk menetapkan.`);
     setTimeout(() => setSaveNotification(null), 4000);
   };
 

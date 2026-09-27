@@ -22,7 +22,7 @@ export type CalendarVerificationStatus =
  */
 export interface CalendarSearchRequest {
   academicYear: string;
-  semester: SemesterNumber;
+  semester?: SemesterNumber;
   province?: string;
   regency?: string;
 }
@@ -47,6 +47,13 @@ export interface CalendarSourceCandidate {
   publicationDate?: string;
   effectiveDate?: string;
 
+  // Annual semester boundaries
+  semester1StartDate?: string;
+  semester1EndDate?: string;
+  semester2StartDate?: string;
+  semester2EndDate?: string;
+
+  // Legacy / fallback semester boundaries
   semesterStartDate?: string;
   semesterEndDate?: string;
 
