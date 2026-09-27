@@ -64,10 +64,6 @@ function determineDiagnosis(
     return 'GENERAL_GEMINI_FAILURE';
   }
 
-  if (m1PlainOk && m2PlainOk && (!m1GroundOk || !m2GroundOk)) {
-    return 'GROUNDING_SPECIFIC_FAILURE';
-  }
-
   return 'MODEL_SPECIFIC_FAILURE';
 }
 
