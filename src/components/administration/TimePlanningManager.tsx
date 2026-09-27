@@ -33,8 +33,27 @@ import { resolveCalendarOnline } from '../../services/calendarProviderClient';
 import {
   CalendarSourceCandidate,
   CalendarSearchDiagnostic,
+  CalendarSearchDiagnosticReason,
   CalendarSourceLevel,
 } from '../../services/calendarProvider';
+
+/**
+ * Maps calendar search diagnostic reasons to mutually exclusive AI search status.
+ */
+export function mapDiagnosticToSearchStatus(
+  reason?: CalendarSearchDiagnosticReason
+): 'NOT_FOUND' | 'ERROR' {
+  if (
+    reason === 'NO_API_KEY' ||
+    reason === 'MODEL_FAILURE' ||
+    reason === 'EMPTY_RESPONSE' ||
+    reason === 'NO_GROUNDING' ||
+    reason === 'GROUNDING_RESOLUTION_FAILED'
+  ) {
+    return 'ERROR';
+  }
+  return 'NOT_FOUND';
+}
 import {
   Clock,
   Calendar as CalendarIcon,
@@ -336,6 +355,7 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
 
         if (candidateLevel === 'NATIONAL') {
           setAiSearchStatus('NOT_FOUND');
+          setOnlineSearchError(null);
           setResolutionMessage('Pencarian AI menemukan sumber nasional sebagai referensi, tetapi belum menemukan Kalender Pendidikan daerah.');
           if (showNotification) {
             setSaveNotification('Pencarian AI menemukan sumber nasional sebagai referensi, tetapi belum menemukan Kalender Pendidikan daerah.');
@@ -344,6 +364,7 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
         } else {
           onlineSuccess = true;
           setAiSearchStatus('SUCCESS');
+          setOnlineSearchError(null);
           setWorkflowStatus('UNRESOLVED');
           setResolutionMessage(`Sumber resmi ${candidateLevel === 'REGENCY' ? 'Kabupaten/Kota' : 'Provinsi'} ditemukan — tinjau sebelum digunakan.`);
           if (showNotification) {
@@ -354,16 +375,21 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
         }
       } else {
         const diagReason = onlineRes.diagnostic?.reason;
-        if (diagReason === 'MODEL_FAILURE' || diagReason === 'NO_API_KEY') {
-          setAiSearchStatus('ERROR');
+        const status = mapDiagnosticToSearchStatus(diagReason);
+        setAiSearchStatus(status);
+        if (status === 'ERROR') {
+          setOnlineSearchError(
+            onlineRes.message || 'Layanan pencarian tidak berhasil menyelesaikan pencarian. Data kalender belum diubah.'
+          );
         } else {
-          setAiSearchStatus('NOT_FOUND');
+          setOnlineSearchError(null);
         }
-        setOnlineSearchError(onlineRes.message || 'Pencarian kalender online belum menemukan sumber resmi terverifikasi.');
       }
     } catch (err: any) {
       setAiSearchStatus('ERROR');
-      setOnlineSearchError(err?.message || 'Gagal melakukan pencarian kalender online');
+      setOnlineSearchError(
+        err?.message || 'Layanan pencarian tidak berhasil menyelesaikan pencarian. Data kalender belum diubah.'
+      );
     } finally {
       setIsOnlineSearching(false);
     }
@@ -980,7 +1006,7 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
           </div>
         )}
 
-        {!isOnlineSearching && (aiSearchStatus === 'ERROR' || onlineSearchError) && (
+        {!isOnlineSearching && aiSearchStatus === 'ERROR' && (
           <div className="mt-3 p-3 bg-rose-50 border border-rose-200 rounded-lg flex items-center gap-2 text-xs text-rose-900">
             <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
             <div>

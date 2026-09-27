@@ -11,6 +11,7 @@ import {
 } from '../src/services/storageV5';
 import { getRuntimeContextV5 } from '../src/services/runtimeV5';
 import { AcademicCalendar, CalendarDay } from '../src/types';
+import { mapDiagnosticToSearchStatus } from '../src/components/administration/TimePlanningManager';
 
 console.log('=== RUNNING AUDIT: MERDEKA V5 ACADEMIC CALENDAR RUNTIME (B.4.1) ===\n');
 
@@ -519,6 +520,60 @@ runTest('17. schoolDaysPerWeek defaults to null when unconfigured without silent
     tpmSource.includes('calendar?.schoolDaysPerWeek === 5 || calendar?.schoolDaysPerWeek === 6\n      ? calendar.schoolDaysPerWeek\n      : null') ||
       tpmSource.includes('? calendar.schoolDaysPerWeek\n      : null'),
     'schoolDaysPerWeek must default to null when unconfigured'
+  );
+});
+
+// -----------------------------------------------------------------------------
+// TEST 18: AI Search Status Mapping & Mutually Exclusive Banner Contract
+// -----------------------------------------------------------------------------
+runTest('18A. SUCCESS status maps to SUCCESS and banners are mutually exclusive', () => {
+  assert.ok(
+    tpmSource.includes("!isOnlineSearching && aiSearchStatus === 'SUCCESS' && ("),
+    'SUCCESS banner must exist and depend strictly on aiSearchStatus === SUCCESS'
+  );
+  assert.ok(
+    tpmSource.includes("!isOnlineSearching && aiSearchStatus === 'NOT_FOUND' && ("),
+    'NOT_FOUND banner must depend strictly on aiSearchStatus === NOT_FOUND'
+  );
+  assert.ok(
+    tpmSource.includes("!isOnlineSearching && aiSearchStatus === 'ERROR' && ("),
+    'ERROR banner must depend strictly on aiSearchStatus === ERROR'
+  );
+});
+
+runTest('18B. Diagnostic NO_OFFICIAL_SOURCE maps to NOT_FOUND (and NOT ERROR)', () => {
+  const status = mapDiagnosticToSearchStatus('NO_OFFICIAL_SOURCE');
+  assert.strictEqual(status, 'NOT_FOUND', 'NO_OFFICIAL_SOURCE must map to NOT_FOUND');
+  assert.notStrictEqual(status, 'ERROR', 'NO_OFFICIAL_SOURCE must NOT map to ERROR');
+});
+
+runTest('18C. Diagnostic CANDIDATE_REJECTED maps to NOT_FOUND', () => {
+  const status = mapDiagnosticToSearchStatus('CANDIDATE_REJECTED');
+  assert.strictEqual(status, 'NOT_FOUND', 'CANDIDATE_REJECTED must map to NOT_FOUND');
+});
+
+runTest('18D. Diagnostics NO_API_KEY, MODEL_FAILURE, EMPTY_RESPONSE, NO_GROUNDING, GROUNDING_RESOLUTION_FAILED map to ERROR', () => {
+  const errorDiagnostics: Array<Parameters<typeof mapDiagnosticToSearchStatus>[0]> = [
+    'NO_API_KEY',
+    'MODEL_FAILURE',
+    'EMPTY_RESPONSE',
+    'NO_GROUNDING',
+    'GROUNDING_RESOLUTION_FAILED',
+  ];
+  for (const diag of errorDiagnostics) {
+    const status = mapDiagnosticToSearchStatus(diag);
+    assert.strictEqual(status, 'ERROR', `${diag} must map to ERROR`);
+  }
+});
+
+runTest('18E. ERROR banner contract strictly rejects aiSearchStatus === ERROR || onlineSearchError', () => {
+  assert.ok(
+    !tpmSource.includes("aiSearchStatus === 'ERROR' || onlineSearchError"),
+    'UI must reject logic equivalent to aiSearchStatus === ERROR || onlineSearchError'
+  );
+  assert.ok(
+    tpmSource.includes("!isOnlineSearching && aiSearchStatus === 'ERROR' && ("),
+    'Error banner must depend strictly on aiSearchStatus === ERROR'
   );
 });
 
