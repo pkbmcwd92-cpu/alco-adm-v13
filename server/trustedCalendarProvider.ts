@@ -32,6 +32,82 @@ export function sanitizeIsoDate(dateStr?: unknown): string | undefined {
   return undefined;
 }
 
+const INDONESIAN_MONTHS: Record<number, string[]> = {
+  1: ['januari', 'jan'],
+  2: ['februari', 'feb'],
+  3: ['maret', 'mar'],
+  4: ['april', 'apr'],
+  5: ['mei'],
+  6: ['juni', 'jun'],
+  7: ['juli', 'jul'],
+  8: ['agustus', 'agt', 'agu'],
+  9: ['september', 'sep'],
+  10: ['oktober', 'okt'],
+  11: ['november', 'nov'],
+  12: ['desember', 'des'],
+};
+
+/**
+ * Pure deterministic evidence checker.
+ * Returns true only if the given ISO date (YYYY-MM-DD) is explicitly supported
+ * by the supplied source text in standard Indonesian or numeric formats.
+ */
+export function isDateSupportedBySource(
+  isoDate: string,
+  sourceText: string
+): boolean {
+  if (!isoDate || !sourceText || typeof isoDate !== 'string' || typeof sourceText !== 'string') {
+    return false;
+  }
+
+  const match = isoDate.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return false;
+
+  const [_, yearStr, monthStr, dayStr] = match;
+  const monthNum = parseInt(monthStr, 10);
+  const dayNum = parseInt(dayStr, 10);
+  if (monthNum < 1 || monthNum > 12 || dayNum < 1 || dayNum > 31) return false;
+
+  const dayPadded = dayStr;
+  const dayUnpadded = String(dayNum);
+  const monthPadded = monthStr;
+  const monthUnpadded = String(monthNum);
+
+  const text = sourceText.toLowerCase();
+
+  // 1. ISO format: 2026-07-13, 2026/07/13, 2026.07.13
+  const isoPattern = new RegExp(`\\b${yearStr}[-/\\.]${monthPadded}[-/\\.]${dayPadded}\\b`, 'i');
+  if (isoPattern.test(text)) return true;
+
+  // 2. Numeric DD-MM-YYYY or D-M-YYYY: 13-07-2026, 13/07/2026, 13.07.2026, 13-7-2026, etc.
+  const dmyNumericPattern = new RegExp(`\\b(?:${dayPadded}|${dayUnpadded})[-/\\.](?:${monthPadded}|${monthUnpadded})[-/\\.]${yearStr}\\b`, 'i');
+  if (dmyNumericPattern.test(text)) return true;
+
+  // 3. Indonesian textual month names: 13 Juli 2026, 13-juli-2026, 13 juli 2026, etc.
+  const months = INDONESIAN_MONTHS[monthNum] || [];
+  for (const mName of months) {
+    const textPattern = new RegExp(`\\b(?:${dayPadded}|${dayUnpadded})[- ]+${mName}[- ]+${yearStr}\\b`, 'i');
+    if (textPattern.test(text)) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Validates ISO date format and guarantees that deterministic evidence exists in sourceText.
+ */
+export function extractValidatedDate(
+  rawDate: unknown,
+  sourceText: string
+): string | undefined {
+  const sanitized = sanitizeIsoDate(rawDate);
+  if (!sanitized) return undefined;
+  if (!isDateSupportedBySource(sanitized, sourceText)) {
+    return undefined;
+  }
+  return sanitized;
+}
+
 export interface SourceContentVerificationResult {
   isValid: boolean;
   hasCalendarKeyword: boolean;
@@ -152,6 +228,7 @@ export interface FetchedSourceContent {
   ok: boolean;
   status: number;
   text: string;
+  rawHtml?: string;
   finalUrl: string;
   contentType: string;
   isPdf: boolean;
@@ -197,6 +274,7 @@ export const defaultSourceContentFetcher: SourceContentFetcher = async (url: str
         ok: true,
         status: res.status,
         text: '',
+        rawHtml: '',
         finalUrl,
         contentType: 'application/pdf',
         isPdf: true,
@@ -211,6 +289,7 @@ export const defaultSourceContentFetcher: SourceContentFetcher = async (url: str
       ok: true,
       status: res.status,
       text: cleanText,
+      rawHtml: boundedText,
       finalUrl,
       contentType,
       isPdf: false,
@@ -219,6 +298,149 @@ export const defaultSourceContentFetcher: SourceContentFetcher = async (url: str
     return null;
   }
 };
+
+/**
+ * Extracts and ranks official .go.id links from real HTML of an official seed page.
+ * Bounded to crawl depth 1.
+ */
+export function extractOfficialLinksFromHtml(
+  html: string,
+  baseUrl: string,
+  academicYear: string
+): string[] {
+  if (!html || !baseUrl || typeof html !== 'string') return [];
+
+  const linkRegex = /<a\s+[^>]*href\s*=\s*(?:["']([^"']+)["']|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi;
+  const scoredLinks: { url: string; score: number }[] = [];
+  const seenUrls = new Set<string>();
+
+  const yearClean = academicYear.trim();
+  const yearVariants = [
+    yearClean,
+    yearClean.replace('/', '-'),
+    yearClean.replace('/', '_'),
+    yearClean.split('/')[0],
+  ].filter(Boolean);
+
+  let match: RegExpExecArray | null;
+  while ((match = linkRegex.exec(html)) !== null) {
+    const rawHref = (match[1] || match[2] || '').trim();
+    const anchorText = (match[3] || '').replace(/<[^>]+>/g, ' ').toLowerCase();
+
+    if (
+      !rawHref ||
+      rawHref.startsWith('#') ||
+      rawHref.startsWith('javascript:') ||
+      rawHref.startsWith('mailto:') ||
+      rawHref.startsWith('tel:')
+    ) {
+      continue;
+    }
+
+    let resolvedUrl: string;
+    try {
+      const parsed = new URL(rawHref, baseUrl);
+      parsed.hash = '';
+      resolvedUrl = parsed.toString();
+    } catch {
+      continue;
+    }
+
+    if (!isOfficialCalendarSourceUrl(resolvedUrl)) {
+      continue;
+    }
+
+    if (seenUrls.has(resolvedUrl)) {
+      continue;
+    }
+    seenUrls.add(resolvedUrl);
+
+    // Scoring
+    const combined = `${resolvedUrl} ${anchorText}`.toLowerCase();
+    let score = 0;
+
+    // Calendar keywords
+    const calendarKeywords = [
+      'kalender pendidikan',
+      'kaldik',
+      'kalender akademik',
+      'pedoman kalender',
+      'keputusan kalender',
+      'tahun pelajaran',
+      'tahun ajaran',
+    ];
+
+    for (const kw of calendarKeywords) {
+      if (combined.includes(kw)) {
+        score += 10;
+      }
+    }
+
+    // Year boost
+    for (const yv of yearVariants) {
+      if (combined.includes(yv.toLowerCase())) {
+        score += 5;
+      }
+    }
+
+    if (score > 0) {
+      scoredLinks.push({ url: resolvedUrl, score });
+    }
+  }
+
+  scoredLinks.sort((a, b) => b.score - a.score);
+  return scoredLinks.map((item) => item.url);
+}
+
+/**
+ * Generates official seed root URLs for a given scope (max 6 seed roots).
+ */
+export function generateOfficialSeedRoots(
+  request: CalendarSearchRequest,
+  level: CalendarSourceLevel
+): string[] {
+  const seeds: string[] = [];
+
+  if (level === 'REGENCY' && request.regency) {
+    const raw = request.regency.toLowerCase().trim();
+    const isKota = raw.startsWith('kota');
+    const core = raw
+      .replace(/^kabupaten\s+/i, '')
+      .replace(/^kab\.\s*/i, '')
+      .replace(/^kota\s+/i, '')
+      .replace(/[^a-z0-9]/g, '');
+
+    const domainSuffix = isKota ? `${core}kota.go.id` : `${core}kab.go.id`;
+    seeds.push(
+      `https://disdik.${domainSuffix}`,
+      `https://dindik.${domainSuffix}`,
+      `https://${domainSuffix}`,
+      `https://jdih.${domainSuffix}`
+    );
+  } else if (level === 'PROVINCE' && request.province) {
+    const rawProv = request.province.toLowerCase().trim();
+    const coreProv = rawProv
+      .replace(/^provinsi\s+/i, '')
+      .replace(/^prov\.\s*/i, '')
+      .replace(/[^a-z0-9]/g, '');
+
+    const provDomain = `${coreProv}prov.go.id`;
+    seeds.push(
+      `https://disdik.${provDomain}`,
+      `https://dindikbud.${provDomain}`,
+      `https://${provDomain}`,
+      `https://jdih.${provDomain}`
+    );
+  } else if (level === 'NATIONAL') {
+    seeds.push(
+      `https://kemendikdasmen.go.id`,
+      `https://kemdikbud.go.id`,
+      `https://jdih.kemdikbud.go.id`
+    );
+  }
+
+  return seeds.filter(isOfficialCalendarSourceUrl).slice(0, 6);
+}
 
 /**
  * Generates official deterministic candidate URLs based on administrative region names and .go.id conventions.
@@ -244,9 +466,7 @@ export function generateDeterministicOfficialUrls(
       `https://disdik.${domainSuffix}/kalender-pendidikan-${reqYearSlug}`,
       `https://disdik.${domainSuffix}/kaldik-${reqYearSlug}`,
       `https://disdik.${domainSuffix}/kalender-pendidikan`,
-      `https://disdik.${domainSuffix}`,
-      `https://${domainSuffix}/kalender-pendidikan-${reqYearSlug}`,
-      `https://jdih.${domainSuffix}`
+      `https://${domainSuffix}/kalender-pendidikan-${reqYearSlug}`
     );
   } else if (level === 'PROVINCE' && request.province) {
     const rawProv = request.province.toLowerCase().trim();
@@ -259,17 +479,12 @@ export function generateDeterministicOfficialUrls(
     urls.push(
       `https://disdik.${provDomain}/kalender-pendidikan-${reqYearSlug}`,
       `https://dindikbud.${provDomain}/kalender-pendidikan-${reqYearSlug}`,
-      `https://disdik.${provDomain}/kaldik-${reqYearSlug}`,
-      `https://disdik.${provDomain}`,
-      `https://${provDomain}`,
-      `https://jdih.${provDomain}`
+      `https://disdik.${provDomain}/kaldik-${reqYearSlug}`
     );
   } else if (level === 'NATIONAL') {
     urls.push(
       `https://kemendikdasmen.go.id/pedoman-kalender-pendidikan-${reqYearSlug}`,
-      `https://kemendikdasmen.go.id`,
-      `https://kemdikbud.go.id`,
-      `https://jdih.kemdikbud.go.id`
+      `https://kemdikbud.go.id/kalender-pendidikan-${reqYearSlug}`
     );
   }
 
@@ -564,14 +779,14 @@ Ketentuan:
           documentTitle: typeof item.documentTitle === 'string' && item.documentTitle.trim() ? item.documentTitle.trim() : fallbackCandidate.documentTitle,
           documentNumber: typeof item.documentNumber === 'string' && item.documentNumber.trim() ? item.documentNumber.trim() : undefined,
           sourceUrl: verifiedUrl, // Source of truth: verified HTTP URL, cannot be hallucinated
-          publicationDate: sanitizeIsoDate(item.publicationDate),
-          effectiveDate: sanitizeIsoDate(item.effectiveDate),
-          semester1StartDate: sanitizeIsoDate(item.semester1StartDate),
-          semester1EndDate: sanitizeIsoDate(item.semester1EndDate),
-          semester2StartDate: sanitizeIsoDate(item.semester2StartDate),
-          semester2EndDate: sanitizeIsoDate(item.semester2EndDate),
-          semesterStartDate: sanitizeIsoDate(item.semesterStartDate || item.semester1StartDate),
-          semesterEndDate: sanitizeIsoDate(item.semesterEndDate || item.semester2EndDate),
+          publicationDate: extractValidatedDate(item.publicationDate, sourceText),
+          effectiveDate: extractValidatedDate(item.effectiveDate, sourceText),
+          semester1StartDate: extractValidatedDate(item.semester1StartDate, sourceText),
+          semester1EndDate: extractValidatedDate(item.semester1EndDate, sourceText),
+          semester2StartDate: extractValidatedDate(item.semester2StartDate, sourceText),
+          semester2EndDate: extractValidatedDate(item.semester2EndDate, sourceText),
+          semesterStartDate: extractValidatedDate(item.semesterStartDate || item.semester1StartDate, sourceText),
+          semesterEndDate: extractValidatedDate(item.semesterEndDate || item.semester2EndDate, sourceText),
           verificationStatus: 'PARTIAL',
           retrievedAt: new Date().toISOString(),
         };
@@ -606,42 +821,74 @@ Ketentuan:
     const runStage = async (level: CalendarSourceLevel): Promise<boolean> => {
       const modelAttempts: CalendarModelAttemptDiagnostic[] = [];
 
-      // 1. Collect candidate URLs from injected discoverer, deterministic patterns, and plain Gemini helper
-      let candidateUrls: string[] = [];
+      // 1. Collect candidate URLs from injected discoverer, seed HTML link discovery, deterministic patterns, and plain Gemini helper
+      const discoveredCandidateUrls: string[] = [];
+      const fallbackProbes: string[] = [];
 
       if (this.customDiscoverUrls) {
         try {
           const customUrls = await this.customDiscoverUrls(request, level);
           if (Array.isArray(customUrls)) {
-            candidateUrls.push(...customUrls);
+            discoveredCandidateUrls.push(...customUrls);
           }
         } catch {
           // ignore custom discovery errors
         }
       } else {
-        // Pattern-based discovery
-        candidateUrls.push(...generateDeterministicOfficialUrls(request, level));
+        // A. Official seed roots (max 6)
+        const seedRoots = generateOfficialSeedRoots(request, level);
 
-        // Plain Gemini discovery helper (if configured)
-        if (isAiConfigured) {
+        // B. Extract links from reachable real HTML seed pages (crawl depth 1)
+        for (const seedUrl of seedRoots) {
+          try {
+            const fetchedSeed = await this.fetchSource(seedUrl);
+            if (fetchedSeed && fetchedSeed.ok) {
+              // If the seed page itself directly passes calendar relevance verification, it can be a candidate
+              const seedRelevance = verifySourceContentRelevance(fetchedSeed.text, fetchedSeed.finalUrl, request, level);
+              if (seedRelevance.isValid) {
+                discoveredCandidateUrls.push(fetchedSeed.finalUrl);
+              }
+
+              // Extract and rank links from HTML
+              const htmlContent = fetchedSeed.rawHtml || fetchedSeed.text;
+              const extractedLinks = extractOfficialLinksFromHtml(htmlContent, fetchedSeed.finalUrl, request.academicYear);
+              discoveredCandidateUrls.push(...extractedLinks);
+            }
+          } catch {
+            // ignore seed fetch error
+          }
+        }
+
+        // C. Deterministic candidate URLs as compatibility fallback
+        if (discoveredCandidateUrls.length === 0) {
+          fallbackProbes.push(...generateDeterministicOfficialUrls(request, level));
+        }
+
+        // D. Plain Gemini URL suggestions as final fallback (if needed)
+        if (isAiConfigured && discoveredCandidateUrls.length === 0) {
           const aiUrls = await this.discoverCandidateUrlsWithAI(request, level, modelAttempts);
-          candidateUrls.push(...aiUrls);
+          discoveredCandidateUrls.push(...aiUrls);
         }
       }
 
       // Deduplicate and filter strict official .go.id
-      const uniqueUrls = Array.from(new Set(candidateUrls.map((u) => u.trim()))).filter(isOfficialCalendarSourceUrl);
-      const boundedUrls = uniqueUrls.slice(0, 8); // Max 8 candidate URLs per stage
+      const allUrlsToTest = Array.from(
+        new Set([...discoveredCandidateUrls, ...fallbackProbes].map((u) => u.trim()))
+      ).filter(isOfficialCalendarSourceUrl).slice(0, 8); // Max 8 candidate URLs per stage
 
-      const rawCandidateCount = boundedUrls.length;
+      let rawCandidateCount = discoveredCandidateUrls.filter(isOfficialCalendarSourceUrl).length;
       let verifiedOfficialCount = 0;
       const stageCandidates: CalendarSourceCandidate[] = [];
 
       // 2. HTTP Fetch and verify each candidate
-      for (const url of boundedUrls) {
+      for (const url of allUrlsToTest) {
         const fetched = await this.fetchSource(url);
         if (!fetched || !fetched.ok) {
           continue;
+        }
+
+        if (discoveredCandidateUrls.length === 0) {
+          rawCandidateCount++;
         }
 
         const relevance = verifySourceContentRelevance(fetched.text, fetched.finalUrl, request, level);
