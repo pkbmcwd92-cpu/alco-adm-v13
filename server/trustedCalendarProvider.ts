@@ -162,6 +162,210 @@ export interface SourceContentVerificationResult {
 }
 
 /**
+ * Normalizes text for calendar evidence matching by lowercasing, removing punctuation,
+ * normalizing dashes/slashes, and collapsing whitespace.
+ */
+export function normalizeCalendarEvidenceText(text: string): string {
+  if (!text || typeof text !== 'string') return '';
+  return text
+    .toLowerCase()
+    .replace(/[,\.;:()\[\]{}"'\\\/]/g, ' ')
+    .replace(/[-_]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Extracts local evidence context windows (±radius chars) around occurrences of an event date in source text.
+ */
+export function extractLocalEvidenceWindows(
+  sourceText: string,
+  dateStr?: string,
+  windowRadius: number = 250
+): string[] {
+  if (!sourceText) return [];
+  const normalized = normalizeCalendarEvidenceText(sourceText);
+  if (!dateStr || typeof dateStr !== 'string') return [normalized];
+
+  const trimmedDate = dateStr.trim();
+  const datePatterns: string[] = [trimmedDate.toLowerCase()];
+
+  const isoMatch = trimmedDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    const year = isoMatch[1];
+    const monthNum = parseInt(isoMatch[2], 10);
+    const day = parseInt(isoMatch[3], 10).toString();
+    const monthNames = [
+      '', 'januari', 'februari', 'maret', 'april', 'mei', 'juni',
+      'juli', 'agustus', 'september', 'oktober', 'november', 'desember'
+    ];
+    const monthShorts = [
+      '', 'jan', 'feb', 'mar', 'apr', 'mei', 'jun',
+      'jul', 'agu', 'sep', 'okt', 'nov', 'des'
+    ];
+    const monthName = monthNames[monthNum] || '';
+    const monthShort = monthShorts[monthNum] || '';
+
+    if (monthName) {
+      datePatterns.push(`${day} ${monthName} ${year}`);
+      datePatterns.push(`${day} ${monthName}`);
+      datePatterns.push(`${day} ${monthShort} ${year}`);
+      datePatterns.push(`${day} ${monthShort}`);
+    }
+    datePatterns.push(`${day}/${monthNum}/${year}`);
+    datePatterns.push(`${day}-${monthNum}-${year}`);
+    datePatterns.push(`${isoMatch[3]}/${isoMatch[2]}/${year}`);
+    datePatterns.push(`${isoMatch[3]}-${isoMatch[2]}-${year}`);
+  }
+
+  const windows: string[] = [];
+  for (const pat of datePatterns) {
+    let searchFrom = 0;
+    while (searchFrom < normalized.length) {
+      const idx = normalized.indexOf(pat, searchFrom);
+      if (idx === -1) break;
+      const start = Math.max(0, idx - windowRadius);
+      const end = Math.min(normalized.length, idx + pat.length + windowRadius);
+      windows.push(normalized.slice(start, end));
+      searchFrom = idx + pat.length;
+    }
+  }
+
+  if (windows.length === 0) {
+    return [normalized];
+  }
+  return windows;
+}
+
+const EVENT_STOPWORDS = new Set([
+  'dan', 'yang', 'pada', 'tanggal', 'kegiatan', 'hari', 'ke', 'di', 'dari',
+  'sampai', 'dengan', 'sd', 's/d', 'tahun', 'pelajaran', 'ajaran', 'sekolah', 'untuk'
+]);
+
+/**
+ * Validates that an AI-extracted event name is supported by semantic evidence in source text.
+ */
+export function isEventNameSupportedBySource(
+  eventName: string,
+  sourceText: string,
+  eventDate?: string
+): boolean {
+  if (!eventName || !sourceText) return false;
+  const normEvent = normalizeCalendarEvidenceText(eventName);
+  if (!normEvent) return false;
+
+  const rawTokens = normEvent.split(' ').filter(Boolean);
+  const meaningfulTokens = rawTokens.filter((t) => t.length >= 2 && !EVENT_STOPWORDS.has(t));
+  const tokensToCheck = meaningfulTokens.length > 0 ? meaningfulTokens : rawTokens;
+
+  const windows = extractLocalEvidenceWindows(sourceText, eventDate, 250);
+
+  const isHolidaySemantic = tokensToCheck.some((t) => ['libur', 'cuti'].includes(t));
+  const isAssessmentSemantic = tokensToCheck.some((t) =>
+    ['asesmen', 'ujian', 'sumatif', 'pts', 'pas', 'pat', 'sts', 'sas', 'sat', 'ulangan'].includes(t)
+  );
+
+  for (const win of windows) {
+    const winHasHoliday = win.includes('libur') || win.includes('cuti');
+    const winHasAssessment = ['asesmen', 'ujian', 'sumatif', 'pts', 'pas', 'pat', 'sts', 'sas', 'sat', 'ulangan'].some((k) => win.includes(k));
+
+    if (isHolidaySemantic && !winHasHoliday && winHasAssessment) {
+      continue;
+    }
+    if (isAssessmentSemantic && !winHasAssessment && winHasHoliday) {
+      continue;
+    }
+
+    const matched = tokensToCheck.filter((t) => win.includes(t));
+    if (tokensToCheck.length <= 2) {
+      if (matched.length >= 1) {
+        return true;
+      }
+    } else {
+      if (matched.length >= Math.ceil(tokensToCheck.length / 2)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Derives event category deterministically from evidence in source text and event name.
+ * AI category hint is only used as fallback when evidence is neutral.
+ */
+export function deriveEventCategoryFromEvidence(
+  eventName: string,
+  sourceText: string,
+  eventDate?: string,
+  aiCategoryHint?: string
+): CalendarSourceEvent['category'] {
+  const normEvent = normalizeCalendarEvidenceText(eventName);
+  const windows = extractLocalEvidenceWindows(sourceText, eventDate, 250);
+  const combinedContext = `${normEvent} ${windows.join(' ')}`;
+
+  // 1. Mid Semester Break
+  if (
+    combinedContext.includes('jeda tengah semester') ||
+    combinedContext.includes('libur tengah semester') ||
+    combinedContext.includes('tengah semester')
+  ) {
+    return 'MID_SEMESTER_BREAK';
+  }
+
+  // 2. Semester Break
+  if (
+    combinedContext.includes('libur semester') ||
+    combinedContext.includes('akhir semester') ||
+    combinedContext.includes('jeda semester') ||
+    combinedContext.includes('libur akhir semester') ||
+    normEvent.includes('libur semester') ||
+    normEvent.includes('akhir semester')
+  ) {
+    return 'SEMESTER_BREAK';
+  }
+
+  // 3. Assessment
+  if (
+    ['asesmen', 'ujian', 'sumatif', 'pts', 'pas', 'pat', 'sts', 'sas', 'sat', 'ulangan', 'penilaian'].some((k) =>
+      normEvent.includes(k) || windows.some((w) => w.includes(k))
+    )
+  ) {
+    return 'ASSESSMENT';
+  }
+
+  // 4. School Event
+  if (
+    [
+      'kegiatan sekolah', 'class meeting', 'classmeeting', 'pesantren kilat',
+      'pengenalan lingkungan', 'mpls', 'matsama', 'porseni', 'karya wisata', 'rapat'
+    ].some((k) => normEvent.includes(k) || windows.some((w) => w.includes(k)))
+  ) {
+    return 'SCHOOL_EVENT';
+  }
+
+  // 5. Holiday
+  if (
+    ['libur', 'cuti', 'hari libur', 'libur awal ramadhan', 'idul fitri', 'hari raya'].some((k) =>
+      normEvent.includes(k) || windows.some((w) => w.includes(k))
+    )
+  ) {
+    return 'HOLIDAY';
+  }
+
+  // 6. Valid AI Hint or OTHER
+  const allowedCategories: CalendarSourceEvent['category'][] = [
+    'HOLIDAY', 'SEMESTER_BREAK', 'MID_SEMESTER_BREAK', 'ASSESSMENT', 'SCHOOL_EVENT', 'OTHER'
+  ];
+  if (aiCategoryHint && allowedCategories.includes(aiCategoryHint.toUpperCase() as any)) {
+    return aiCategoryHint.toUpperCase() as CalendarSourceEvent['category'];
+  }
+
+  return 'OTHER';
+}
+
+/**
  * Verifies whether fetched text or page content contains genuine proof
  * of Indonesian academic calendar regulations for the requested region and academic year.
  */
@@ -185,13 +389,14 @@ export function verifySourceContentRelevance(
   }
 
   const textLower = (textOrHtml || '').toLowerCase();
+  const normalizedText = textLower.replace(/[-_]/g, ' ');
   const urlLower = (url || '').toLowerCase();
   const combined = `${urlLower} ${textLower}`;
   const normalizedCombined = combined.replace(/[-_]/g, ' ');
 
-  // 1. Strong Calendar keywords (REQUIRED)
+  // 1. Strong Calendar keywords (REQUIRED from actual fetched content ONLY, not URL)
   const hasStrongCalendarEvidence = STRONG_CALENDAR_KEYWORDS.some(
-    (kw) => combined.includes(kw) || normalizedCombined.includes(kw)
+    (kw) => textLower.includes(kw) || normalizedText.includes(kw)
   );
 
   // 2. Weak Supporting Calendar keywords
@@ -238,8 +443,10 @@ export function verifySourceContentRelevance(
     }
   }
 
-  // Strong calendar evidence is mandatory. Weak keywords alone cannot qualify a candidate.
-  // If strong calendar evidence is absent and negative admission evidence is present -> NON_CALENDAR_EDUCATION_PAGE
+  // Strong calendar evidence in fetched content is mandatory. Weak keywords or URL-only terms cannot qualify a candidate.
+  // If strong calendar evidence is absent:
+  // - If negative admission evidence is present -> NON_CALENDAR_EDUCATION_PAGE
+  // - Otherwise -> MISSING_STRONG_CALENDAR_EVIDENCE
   const isValid = hasStrongCalendarEvidence && hasAcademicYear && hasGeographicSignal;
 
   let rejectionReason: string | undefined = undefined;
@@ -348,6 +555,59 @@ export interface FetchedSourceContent {
 export type SourceContentFetcher = (url: string) => Promise<FetchedSourceContent | null>;
 
 /**
+ * Reads a stream of bytes up to maxBytes (default 10 MB).
+ * If total bytes exceed maxBytes, cancels the reader and returns exceeded: true.
+ */
+export async function readBoundedStream(
+  body: ReadableStream<Uint8Array> | null | undefined,
+  maxBytes: number = 10 * 1024 * 1024
+): Promise<{ buffer: Uint8Array | null; exceeded: boolean }> {
+  if (!body) {
+    return { buffer: null, exceeded: false };
+  }
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (value) {
+        totalBytes += value.byteLength;
+        if (totalBytes > maxBytes) {
+          try {
+            await reader.cancel('MAX_SIZE_EXCEEDED');
+          } catch {
+            // ignore cancel error
+          }
+          return { buffer: null, exceeded: true };
+        }
+        chunks.push(value);
+      }
+    }
+
+    const merged = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      merged.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return { buffer: merged, exceeded: false };
+  } catch {
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore
+    }
+    return { buffer: null, exceeded: false };
+  }
+}
+
+/**
  * Default HTTP fetcher with timeout, size bound, redirect follow, HTTPS .go.id enforcement, and PDF text extraction.
  */
 export const defaultSourceContentFetcher: SourceContentFetcher = async (url: string): Promise<FetchedSourceContent | null> => {
@@ -381,22 +641,56 @@ export const defaultSourceContentFetcher: SourceContentFetcher = async (url: str
     const isPdf = contentType.includes('application/pdf') || finalUrl.toLowerCase().endsWith('.pdf');
 
     if (isPdf) {
+      const MAX_PDF_BYTES = 10 * 1024 * 1024;
+      // 1. Content-Length Precheck (prevents buffering large bodies)
+      const contentLengthHeader = res.headers.get('content-length');
+      const contentLength = contentLengthHeader ? parseInt(contentLengthHeader, 10) : NaN;
+      if (!Number.isNaN(contentLength) && contentLength > MAX_PDF_BYTES) {
+        return {
+          ok: true,
+          status: res.status,
+          text: '',
+          rawHtml: '',
+          finalUrl,
+          contentType: 'application/pdf',
+          isPdf: true,
+        };
+      }
+
+      // 2. Bounded stream reader
       try {
-        const arrayBuffer = await res.arrayBuffer();
-        if (arrayBuffer.byteLength > 10 * 1024 * 1024) {
-          // Hard size limit: 10 MB, fail closed to metadata-only partial source
-          return {
-            ok: true,
-            status: res.status,
-            text: '',
-            rawHtml: '',
-            finalUrl,
-            contentType: 'application/pdf',
-            isPdf: true,
-          };
+        let pdfBytes: Uint8Array | null = null;
+        if (res.body && typeof res.body.getReader === 'function') {
+          const streamResult = await readBoundedStream(res.body, MAX_PDF_BYTES);
+          if (streamResult.exceeded || !streamResult.buffer) {
+            return {
+              ok: true,
+              status: res.status,
+              text: '',
+              rawHtml: '',
+              finalUrl,
+              contentType: 'application/pdf',
+              isPdf: true,
+            };
+          }
+          pdfBytes = streamResult.buffer;
+        } else {
+          const arrayBuffer = await res.arrayBuffer();
+          if (arrayBuffer.byteLength > MAX_PDF_BYTES) {
+            return {
+              ok: true,
+              status: res.status,
+              text: '',
+              rawHtml: '',
+              finalUrl,
+              contentType: 'application/pdf',
+              isPdf: true,
+            };
+          }
+          pdfBytes = new Uint8Array(arrayBuffer);
         }
 
-        const extractedText = await extractTextFromPdfBuffer(arrayBuffer, 50000);
+        const extractedText = await extractTextFromPdfBuffer(pdfBytes, 50000);
         return {
           ok: true,
           status: res.status,
@@ -936,19 +1230,26 @@ Ketentuan:
             continue;
           }
 
+          // Validate event name against sourceText (semantic evidence)
+          const isNameValid = isEventNameSupportedBySource(name, sourceText, validStart);
+          if (!isNameValid) {
+            // If event name is not supported by source text, discard the entire event
+            continue;
+          }
+
           // Validate endDate against sourceText if provided
           let validEnd: string | undefined = undefined;
           if (ev.endDate) {
             validEnd = extractValidatedDate(ev.endDate, sourceText);
           }
 
-          let category: CalendarSourceEvent['category'] = 'OTHER';
-          if (ev.category && typeof ev.category === 'string') {
-            const upperCat = ev.category.toUpperCase().trim();
-            if (allowedCategories.includes(upperCat as any)) {
-              category = upperCat as CalendarSourceEvent['category'];
-            }
-          }
+          // Derive event category deterministically from evidence in source text (AI category is hint only)
+          const category = deriveEventCategoryFromEvidence(
+            name,
+            sourceText,
+            validStart,
+            typeof ev.category === 'string' ? ev.category : undefined
+          );
 
           validatedEvents.push({
             name,

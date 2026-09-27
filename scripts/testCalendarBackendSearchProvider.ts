@@ -17,6 +17,10 @@ import {
   extractOfficialLinksFromHtml,
   isDateSupportedBySource,
   extractTextFromPdfBuffer,
+  isEventNameSupportedBySource,
+  deriveEventCategoryFromEvidence,
+  readBoundedStream,
+  defaultSourceContentFetcher,
 } from '../server/calendarProvider';
 import { CalendarSearchRequest } from '../src/services/calendarProvider';
 
@@ -1815,7 +1819,7 @@ async function main() {
       fetchSourceContent: async (url) => ({
         ok: true,
         status: 200,
-        text: '',
+        text: 'Kalender Pendidikan Tahun Pelajaran 2026/2027 Kota Tangerang.',
         rawHtml: '',
         finalUrl: pdfUrl,
         contentType: 'application/pdf',
@@ -2183,6 +2187,229 @@ async function main() {
     assert.strictEqual(res.candidates.length, 1);
     assert.strictEqual(res.candidates[0].sourceLevel, 'PROVINCE');
     assert.strictEqual(res.candidates[0].sourceUrl, provinceKaldikUrl);
+  });
+
+  // TEST BM: Strong calendar evidence must come from content, not URL
+  await runTest('BM. Strong evidence content-only: URL with /kaldik but non-calendar content is rejected', async () => {
+    const url = 'https://disdik.examplekota.go.id/kaldik-2026-2027';
+    const text = 'Informasi umum Dinas Pendidikan Kota Example. Tahun Ajaran 2026/2027.';
+
+    const verification = verifySourceContentRelevance(
+      text,
+      url,
+      { academicYear: '2026/2027', province: 'Banten', regency: 'Kota Example' },
+      'REGENCY'
+    );
+    assert.strictEqual(verification.isValid, false);
+    assert.strictEqual(verification.hasStrongCalendarEvidence, false);
+    assert.strictEqual(verification.rejectionReason, 'MISSING_STRONG_CALENDAR_EVIDENCE');
+  });
+
+  // TEST BN: Event wrong semantic label rejected
+  await runTest('BN. Semantic event validation: AI claiming "Libur Semester" for "Asesmen Sumatif" is discarded', async () => {
+    const verifiedUrl = 'https://disdik.tangerangkota.go.id/kaldik-2026-2027';
+    const sourceText = 'Kalender Pendidikan Tahun Ajaran 2026/2027 Kota Tangerang. Asesmen Sumatif tanggal 10 Desember 2026.';
+
+    const provider = new TrustedCalendarSearchProvider({
+      discoverCandidateUrls: async () => [verifiedUrl],
+      fetchSourceContent: async () => ({
+        ok: true,
+        status: 200,
+        text: sourceText,
+        finalUrl: verifiedUrl,
+        contentType: 'text/html',
+        isPdf: false,
+      }),
+      generatePlainContent: async () => ({
+        text: JSON.stringify([
+          {
+            province: 'Banten',
+            regency: 'Kota Tangerang',
+            academicYear: '2026/2027',
+            authority: 'Dinas Pendidikan Kota Tangerang',
+            documentTitle: 'Kaldik Kota Tangerang 2026/2027',
+            events: [
+              {
+                name: 'Libur Semester',
+                startDate: '2026-12-10',
+                category: 'SEMESTER_BREAK',
+              },
+            ],
+          },
+        ]),
+      }),
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(res.candidates.length, 1);
+    assert.strictEqual(res.candidates[0].events, undefined, 'Event with conflicting semantic name must be discarded');
+  });
+
+  // TEST BO: Event category derived from source evidence overrides incorrect AI category
+  await runTest('BO. Category derivation: Source "Asesmen Sumatif" overrides AI category "HOLIDAY" -> "ASSESSMENT"', async () => {
+    const verifiedUrl = 'https://disdik.tangerangkota.go.id/kaldik-2026-2027';
+    const sourceText = 'Kalender Pendidikan Tahun Ajaran 2026/2027 Kota Tangerang. Asesmen Sumatif tanggal 10 Desember 2026.';
+
+    const provider = new TrustedCalendarSearchProvider({
+      discoverCandidateUrls: async () => [verifiedUrl],
+      fetchSourceContent: async () => ({
+        ok: true,
+        status: 200,
+        text: sourceText,
+        finalUrl: verifiedUrl,
+        contentType: 'text/html',
+        isPdf: false,
+      }),
+      generatePlainContent: async () => ({
+        text: JSON.stringify([
+          {
+            province: 'Banten',
+            regency: 'Kota Tangerang',
+            academicYear: '2026/2027',
+            authority: 'Dinas Pendidikan Kota Tangerang',
+            documentTitle: 'Kaldik Kota Tangerang 2026/2027',
+            events: [
+              {
+                name: 'Asesmen Sumatif',
+                startDate: '2026-12-10',
+                category: 'HOLIDAY',
+              },
+            ],
+          },
+        ]),
+      }),
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(res.candidates.length, 1);
+    assert.ok(Array.isArray(res.candidates[0].events));
+    assert.strictEqual(res.candidates[0].events?.length, 1);
+    assert.strictEqual(res.candidates[0].events?.[0].name, 'Asesmen Sumatif');
+    assert.strictEqual(res.candidates[0].events?.[0].category, 'ASSESSMENT', 'Must correct AI category to ASSESSMENT');
+  });
+
+  // TEST BP: Valid semester break accepted and categorized
+  await runTest('BP. Valid semester break: "Libur Semester Ganjil" accepted with category SEMESTER_BREAK', async () => {
+    const verifiedUrl = 'https://disdik.tangerangkota.go.id/kaldik-2026-2027';
+    const sourceText = 'Kalender Pendidikan Tahun Ajaran 2026/2027 Kota Tangerang. Libur Semester Ganjil mulai 21 Desember 2026 sampai 3 Januari 2027.';
+
+    const provider = new TrustedCalendarSearchProvider({
+      discoverCandidateUrls: async () => [verifiedUrl],
+      fetchSourceContent: async () => ({
+        ok: true,
+        status: 200,
+        text: sourceText,
+        finalUrl: verifiedUrl,
+        contentType: 'text/html',
+        isPdf: false,
+      }),
+      generatePlainContent: async () => ({
+        text: JSON.stringify([
+          {
+            province: 'Banten',
+            regency: 'Kota Tangerang',
+            academicYear: '2026/2027',
+            authority: 'Dinas Pendidikan Kota Tangerang',
+            documentTitle: 'Kaldik Kota Tangerang 2026/2027',
+            events: [
+              {
+                name: 'Libur Semester Ganjil',
+                startDate: '2026-12-21',
+                endDate: '2027-01-03',
+                category: 'SEMESTER_BREAK',
+              },
+            ],
+          },
+        ]),
+      }),
+    });
+
+    const res = await provider.searchWithDiagnostics({
+      academicYear: '2026/2027',
+      province: 'Banten',
+      regency: 'Kota Tangerang',
+    });
+
+    assert.strictEqual(res.candidates.length, 1);
+    assert.ok(Array.isArray(res.candidates[0].events));
+    assert.strictEqual(res.candidates[0].events?.length, 1);
+    assert.strictEqual(res.candidates[0].events?.[0].category, 'SEMESTER_BREAK');
+  });
+
+  // TEST BQ: PDF Content-Length Guard (> 10 MB)
+  await runTest('BQ. PDF Content-Length guard: PDF with Content-Length > 10 MB returns metadata-only without reading body', async () => {
+    const largePdfUrl = 'https://disdik.tangerangkota.go.id/dokumen/large-calendar.pdf';
+    let streamOrArrayBufferInvoked = false;
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
+      return {
+        ok: true,
+        status: 200,
+        url: largePdfUrl,
+        headers: new Headers({
+          'content-type': 'application/pdf',
+          'content-length': '15728640', // 15 MB
+        }),
+        arrayBuffer: async () => {
+          streamOrArrayBufferInvoked = true;
+          return new ArrayBuffer(0);
+        },
+        body: {
+          getReader: () => {
+            streamOrArrayBufferInvoked = true;
+            throw new Error('Should not invoke stream reader when Content-Length exceeds limit');
+          },
+        },
+      } as any;
+    };
+
+    try {
+      const fetched = await defaultSourceContentFetcher(largePdfUrl);
+      assert.ok(fetched);
+      assert.strictEqual(fetched.ok, true);
+      assert.strictEqual(fetched.isPdf, true);
+      assert.strictEqual(fetched.text, '', 'Text must be empty for oversized PDF');
+      assert.strictEqual(streamOrArrayBufferInvoked, false, 'Body stream or arrayBuffer must not be invoked');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  // TEST BR: Stream Hard Limit (without Content-Length header, chunks > 10 MB)
+  await runTest('BR. Stream hard limit: Stream exceeding 10 MB is cancelled and returns metadata-only', async () => {
+    let readerCancelled = false;
+    const chunkSize = 4 * 1024 * 1024; // 4 MB chunks
+    let chunkCount = 0;
+
+    const mockStream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (chunkCount >= 4) {
+          controller.close();
+          return;
+        }
+        chunkCount++;
+        controller.enqueue(new Uint8Array(chunkSize));
+      },
+      cancel() {
+        readerCancelled = true;
+      },
+    });
+
+    const result = await readBoundedStream(mockStream, 10 * 1024 * 1024);
+    assert.strictEqual(result.exceeded, true, 'Must report exceeded: true');
+    assert.strictEqual(result.buffer, null, 'Buffer must be null on exceed');
+    assert.strictEqual(readerCancelled, true, 'Stream reader must be cancelled');
   });
 
   console.log(`\n========================================`);
